@@ -1,0 +1,24 @@
+# Paper database: never in Git (the pre-built store is shared privately on request)
+*.sqlite
+*.sqlite*
+*.db
+
+# Secrets and machine-specific files
+.env
+.env.*
+.radar_token
+*.key
+
+# Runtime output and logs
+output/
+radar.log
+*.log
+pending_pdf_queue.json
+curation_marks*.json
+
+# Python / OS
+__pycache__/
+*.py[cod]
+.DS_Store
+Thumbs.db
+desktop.ini

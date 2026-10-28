@@ -1,0 +1,178 @@
+{
+  "_starter_note": "IC Paper Radar — Starter Edition. Fill in pillars, positive_keywords, negative_keywords, anchors, vip_authors and beyond_ieee.key1_themes (README.md, Step 2), then run: python briefing.py --rescore",
+  "portable_mode": true,
+  "host_lock": "",
+  "dashboard_corpus": true,
+  "contact_email": "",
+
+  "pillars": [],
+
+  "_keyword_note": "Plain keys: word-boundary match, case-insensitive unless ALL CAPS; a space or hyphen matches either, and a plural -s/-es also matches (keys that differ only by space/hyphen count once). Keys 're:<label>::<regex>' are raw regexes (case-sensitive unless (?i)); <label> is shown in the report. Weight 0 = section heading '_pillarN_<slug>': every key below it belongs to pillar N (N = position in 'pillars', starting at 1).",
+  "positive_keywords": {},
+
+  "_negative_note": "Off-topic terms. A negative keyword zeroes a paper with no positive keyword hit; with a hit (or a title matching negative_override) it only costs negative_penalty.",
+  "negative_keywords": [],
+  "negative_override": "",
+  "negative_penalty": -5,
+
+  "anchors": [],
+  "anchor_boost": 5,
+  "vip_authors": [],
+  "vip_boost": 3,
+
+  "lookback_days": 7,
+  "min_score": 5,
+  "crossref_rows_per_venue": 100,
+  "ieee_daily_budget": 50,
+  "ieee_doi_lookups_max": 20,
+  "backfill_floor": "2024-01-01",
+  "backfill_chunk_days": 31,
+  "abstract_give_up_days": 14,
+
+  "topic": {
+    "ieee_topic_reserve": 30,
+    "default_max_ieee": 25,
+    "n_classic": 6,
+    "n_recent": 8,
+    "recent_from_year": 2023,
+    "openalex_per_query": 50,
+    "generic_words": ["design", "designs", "focusing", "focus", "technique", "techniques", "based", "using", "with",
+                      "and", "for", "the", "of", "on", "in", "a", "an", "to", "low", "high", "ultra", "method", "methods"],
+    "synonyms": {
+      "leakage": ["leakage", "low-leakage", "gate leakage", "junction leakage", "leakage current", "power gating"],
+      "sensor": ["sensor", "sensing", "readout", "sensor interface"],
+      "temperature": ["temperature", "thermal"],
+      "reference": ["reference", "bandgap"],
+      "oscillator": ["oscillator", "timer", "clock"],
+      "harvesting": ["harvesting", "harvester", "energy harvester"],
+      "adc": ["ADC", "converter", "analog-to-digital"],
+      "amplifier": ["amplifier", "OTA", "LNA"],
+      "pll": ["PLL", "phase-locked loop", "frequency synthesizer"],
+      "dcdc": ["DC-DC", "buck", "boost", "converter", "regulator"],
+      "memory": ["SRAM", "compute-in-memory", "CIM", "in-memory computing"]
+    }
+  },
+
+  "digests_per_day_max": 12,
+  "weekly_top": 12,
+  "report_day": "Friday",
+
+  "verification": {
+    "silicon_cues": ["fabricated", "prototype", "test chip", "test-chip", "die area", "active area", "chip micrograph",
+                     "measured", "measurement results", "measurements show", "measurement shows", "silicon", " chips"],
+    "simulation_cues": ["simulation results", "post-layout simulation", "simulated in", "SPICE simulation",
+                        "simulations show", "simulation shows", "simulated results"],
+    "silicon_bonus": 1,
+    "simulation_penalty": -4
+  },
+
+  "venues": [
+    {"short": "JSSC",    "name": "IEEE Journal of Solid-State Circuits",                         "issn": ["0018-9200", "1558-173X"], "type": "journal",
+     "ieee_query": {"publication_number": "4"}},
+    {"short": "TCAS-I",  "name": "IEEE Transactions on Circuits and Systems I: Regular Papers",  "issn": ["1549-8328", "1558-0806"], "type": "journal",
+     "ieee_query": {"publication_number": "8919"}},
+    {"short": "TCAS-II", "name": "IEEE Transactions on Circuits and Systems II: Express Briefs", "issn": ["1549-7747", "1558-3791"], "type": "journal",
+     "ieee_query": {"publication_number": "8920"}},
+    {"short": "TBioCAS", "name": "IEEE Transactions on Biomedical Circuits and Systems",         "issn": ["1932-4545", "1940-9990"], "type": "journal",
+     "ieee_query": {"publication_number": "4156126"}},
+    {"short": "SensLett","name": "IEEE Sensors Letters",                                        "issn": ["2475-1472"],              "type": "journal",
+     "ieee_query": {"publication_number": "7782634"}},
+    {"short": "ISSCC",   "name": "IEEE International Solid-State Circuits Conference",           "issn": ["0193-6530", "2376-8606"], "type": "conference",
+     "ieee_query": {"publication_title": "International Solid-State Circuits Conference", "content_type": "Conferences"},
+     "container_regex": "^(\\d{4} )?IEEE International Solid-State Circuits Conference"},
+    {"short": "CICC",    "name": "IEEE Custom Integrated Circuits Conference",                   "issn": ["0886-5930", "2152-3630"], "type": "conference",
+     "ieee_query": {"publication_title": "Custom Integrated Circuits Conference", "content_type": "Conferences"},
+     "container_regex": "^(\\d{4} )?IEEE Custom Integrated Circuits Conference"},
+    {"short": "SSC-L",   "name": "IEEE Solid-State Circuits Letters",                            "issn": ["2573-9603"],              "type": "journal",
+     "ieee_query": {"publication_number": "8011414"}},
+    {"short": "ESSERC",  "name": "IEEE European Solid-State Electronics Research Conference (ESSERC/ESSCIRC)", "issn": [], "type": "conference",
+     "title_query": "European Solid-State Circuits Conference",
+     "ieee_query": {"publication_title": "European Solid-State", "content_type": "Conferences"},
+     "container_regex": "European Solid[- ]State (Circuits|Electronics Research) Conference|ESSCIRC|ESSERC"},
+    {"short": "VLSI",    "name": "IEEE Symposium on VLSI Technology and Circuits",               "issn": ["2158-9682", "0743-1562", "2158-5601"], "type": "conference",
+     "title_query": "Symposium on VLSI Technology and Circuits",
+     "ieee_query": {"publication_title": "Symposium on VLSI", "content_type": "Conferences"},
+     "container_regex": "Symposium on VLSI (Technology and Circuits|Circuits)"}
+  ],
+
+  "lineage": {
+    "journals": ["JSSC", "TCAS-I", "TCAS-II", "SSC-L", "TBioCAS"],
+    "conferences": {
+      "ISSCC": "International Solid[- ]State Circuits Conference|\\bISSCC\\b",
+      "VLSI": "Symposium on VLSI|\\bVLSI (Circuits|Technology)",
+      "CICC": "Custom Integrated Circuits Conference|\\bCICC\\b",
+      "ESSERC": "European Solid[- ]State (Circuits|Electronics Research) Conference|ESSCIRC|ESSERC"
+    },
+    "min_months": 1,
+    "max_months": 36,
+    "openalex_search_years": 3,
+    "recheck_days": 30,
+    "_tech_words_note": "Words that two titles must share (with shared authors) to link a conference paper to its journal version. Add the core words of your own field.",
+    "tech_words": ["temperature", "sensor", "sensors", "sar", "adc", "adcs", "sigma", "delta", "pipelined", "reference",
+                   "bandgap", "oscillator", "oscillators", "pll", "plls", "dll", "vco", "dco", "tdc", "receiver",
+                   "transmitter", "transceiver", "readout", "harvester", "harvesting", "rectifier", "converter",
+                   "regulator", "ldo", "buck", "boost", "sram", "memory", "cim", "amplifier", "lna", "ota", "chopper",
+                   "calibration", "calibrated", "frequency", "clock", "neural", "biopotential", "wireline", "serdes"],
+    "min_tech_shared": 2
+  },
+
+  "beyond_ieee_venues": [
+    {"short": "Nat Electron", "name": "Nature Electronics", "issn": "2520-1131", "two_key": false},
+    {"short": "Nat BME", "name": "Nature Biomedical Engineering", "issn": "2157-846X", "two_key": true,
+     "rss": "https://www.nature.com/natbiomedeng.rss"},
+    {"short": "Nat Commun", "name": "Nature Communications", "issn": "2041-1723", "two_key": true},
+    {"short": "Sci Adv", "name": "Science Advances", "issn": "2375-2548", "two_key": true},
+    {"short": "Nature", "name": "Nature", "issn": "1476-4687", "two_key": true},
+    {"short": "Science", "name": "Science", "issn": "1095-9203", "two_key": true}
+  ],
+  "beyond_ieee": {
+    "lookback_days": 14,
+    "pool_days": 365,
+    "pool_refresh_days": 7,
+    "board_size": 10,
+    "_key1_note": "Application themes of YOUR research (e.g. 'wearable', 'implantable', '6G', 'quantum computing'). Empty = the Beyond-IEEE (Nature/Science) board stays off.",
+    "key1_themes": [],
+    "key2_hardware": ["CMOS", "integrated circuit", "ASIC", "chip", "system-on-chip", "re:SoC::\\bSoC\\b", "readout circuit",
+                      "circuit", "circuits", "circuitry", "wireless", "Bluetooth", "NFC", "RFID", "microcontroller",
+                      "power management", "electronic system",
+                      "analog front-end", "analogue front-end", "AFE", "ADC", "rectifier", "MPPT", "oscillator",
+                      "amplifier", "microwatt", "nanowatt", "picowatt", "re:sub-µW::(?i)\\bsub-?(µ|u|micro)W\\b",
+                      "re:nW/pW::\\d\\s?-?\\s?(nW|pW)\\b", "wireless power transfer", "backscatter", "multiplexing", "silicon"],
+    "exclude": ["density functional theory", "first-principles", "DFT calculations",
+                "catalyst", "catalytic", "electrocatalyst", "total synthesis", "organic synthesis", "crystal structure of",
+                "gene expression", "single-cell RNA"]
+  },
+
+  "catch_up": {"since": "2025-01-01", "per_pillar": 3,
+               "flagship_venues": ["JSSC", "ISSCC", "VLSI", "CICC", "ESSERC", "SSC-L"], "flagship_bonus": 3,
+               "_note": "Pre-loaded (archive) papers published since `since` join the weekly report in a Catch-up section: the best `per_pillar` of each pillar per week. `briefing.py --seed-pillars N` pulls N per pillar now."},
+
+  "paths": {
+    "_note": "portable_mode: every output goes to ./output (paths.py). marks_extra_dirs: where the dashboard's '💾 Save Marks' downloads land.",
+    "marks_extra_dirs": ["~/Downloads"],
+    "store_file": "paper_store.sqlite",
+    "pdf_queue_file": "pending_pdf_queue.json"
+  },
+
+  "vpn": {
+    "_note": "Optional, only used with --require-vpn / --fetch-pdf: a check that your own institution's VPN is up. Fill campus_route_host (a host reachable only inside your campus network), campus_networks (your campus IP ranges) and campus_dns (an internal DNS server). Ignore otherwise.",
+    "interface_patterns": ["WireGuard", "Wintun", "TAP-Windows", "OpenVPN"],
+    "campus_networks": [],
+    "campus_route_host": "",
+    "campus_dns": [],
+    "probe_timeout_s": 2,
+    "notify": false
+  },
+
+  "sync_server": {
+    "port": 18765,
+    "hosts": [],
+    "probe_timeout_ms": 1500
+  },
+
+  "claude": {
+    "command": "claude",
+    "model": "",
+    "timeout_s": 900
+  }
+}
