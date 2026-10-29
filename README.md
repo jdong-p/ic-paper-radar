@@ -202,9 +202,9 @@ MY CURRENT config.json:
 }
 ```
 
-With the pre-built database, this example puts five noise-shaping / pipelined SAR ADC papers and five
-fractional-N PLL papers from JSSC and TCAS-II on the radar.
-使用预建数据库时，该示例会筛出 5 篇噪声整形/流水线 SAR ADC 论文和 5 篇小数分频 PLL 论文。
+With the pre-built database, this example puts ten noise-shaping / pipelined SAR ADC papers and ten
+fractional-N PLL papers (JSSC, TCAS-I/II, CICC, ISSCC) on the radar.
+使用预建数据库时，该示例会筛出 10 篇噪声整形/流水线 SAR ADC 论文和 10 篇小数分频 PLL 论文。
 
 ---
 
@@ -221,9 +221,10 @@ python briefing.py --seed-pillars 5 --no-claude
 
 - `--rescore` scores every paper in the store against your pillars (0 API calls, seconds).
   按你的 pillars 给库中全部论文打分（0 次 API 调用，几秒完成）。
-- `--seed-pillars 5` puts the 5 best papers of each pillar (published since 2025, flagship venues
-  first) on the radar and writes `output/DASHBOARD.html` and `output/MASTER_TABLE.md`.
-  为每个 pillar 选出 5 篇最相关的论文（2025 年以来，旗舰会议/期刊优先），生成面板和总表。
+- `--seed-pillars 5` fills each pillar with its best papers (published since 2025, flagship venues
+  first): at least 5, and up to 10 unreviewed 📋 Candidates (see "Catch-up" below). It writes
+  `output/DASHBOARD.html` and `output/MASTER_TABLE.md`.
+  为每个 pillar 选出最相关的论文（2025 年以来，旗舰会议/期刊优先；至少 5 篇，并补足到 10 篇待审），生成面板和总表。
 
 Open `output/DASHBOARD.html` in your browser. Not happy with the picks? Edit the keywords and run both
 commands again; it costs nothing.
@@ -254,24 +255,32 @@ Run it every morning / 每天自动运行:
 ### Catch-up: older papers join your radar / 补录：旧论文进入雷达
 
 ```bash
-python briefing.py                     # daily run: the best 3 per pillar join this week automatically
-python briefing.py --seed-pillars 8    # want more now? top each pillar up to 8 for this week
+python briefing.py --sync                       # after 💾 Save Marks: apply your clicks, refill each pillar
+python briefing.py --archive "<DOI or title>"   # a mark from the terminal refills that pillar too
+python briefing.py --seed-pillars 15            # want more now? 15 this week instead of 10
 ```
 
 - **What it does:** papers already in the store (status `archive`) that were published since
-  `catch_up.since` (2025-01-01) never appeared as "new", so no report showed them. Each week the best
-  `catch_up.per_pillar` (3) of each pillar join the radar's 📋 Candidates and the report's Catch-up
-  section. Flagship venues (`flagship_venues`: JSSC, ISSCC, VLSI, CICC, ESSERC, SSC-L) rank higher.
-  库中 2025 年以来、从未作为"新论文"出现过的论文，每周每个 pillar 选最好的 3 篇加入雷达（旗舰会议/期刊优先）。
-- **Counting:** the 3 (or N) count every paper pulled this week, even after you ✅/⭐/🗄️ it. Reviewing
-  them doesn't bring new ones until next week; run `--seed-pillars N` with a larger N for more.
-  已整理的论文也计入本周名额；想立刻看更多，用更大的 N 运行 `--seed-pillars N`。
+  `catch_up.since` (2025-01-01) never appeared as "new", so no report showed them. Catch-up moves the
+  best of them into the radar's 📋 Candidates and the report's Catch-up section. Flagship venues
+  (`flagship_venues`: JSSC, ISSCC, VLSI, CICC, ESSERC, SSC-L) rank higher; ties go to the newest.
+  库中 2025 年以来、从未作为"新论文"出现过的论文，会按 pillar 补进 📋 Candidates（旗舰会议/期刊优先）。
+- **How many, per pillar:** the larger of two rules.
+  - **Water mark:** keep `min_candidates_per_pillar` (10) unreviewed 📋 Candidates. Each ✅ Select,
+    ⭐ Cite or 🗄️ Archive drops the pillar to 9, and the next command brings it back to 10.
+  - **Weekly top:** at least `per_pillar` (3) new ones every week, even when the pillar is full.
+  水位线：每个 pillar 保持 10 篇待审论文，每整理一篇（✅/⭐/🗄️），下次运行就补一篇；每周至少新增 3 篇。
+- **When it refills:** the daily run, `--sync`, the mark flags (`--select`, `--cite`, `--archive`, …),
+  `--rescore`, `--lineage`, `--add` and `--seed-pillars`. Dashboard clicks count once you 💾 Save Marks
+  and run `--sync` (or the next daily run). If a pillar prints `Pillar archive used up`, every matching
+  paper is already on the radar.
+  每日运行、`--sync`、标记命令、`--rescore`、`--lineage`、`--add`、`--seed-pillars` 都会补充；面板上的点击需先 💾 保存再 `--sync`。
 - **Not papers:** `catch_up.not_a_paper` (a regex on title + abstract) skips ISSCC/VLSI tutorials, short
   courses, forums and plenary talks, which IEEE lists like papers (about 24 in the shared database).
   Leave it in `config.json`; delete it only if you want those entries back.
   `not_a_paper` 正则会跳过 IEEE 当作论文收录的教程、短课程、论坛和全体报告（共享数据库中约 24 条），请保留。
-- **Settings** in `config.json` → `catch_up`: `since`, `per_pillar`, `flagship_venues`, `flagship_bonus`,
-  `not_a_paper`. 均可在 `config.json` 的 `catch_up` 中修改。
+- **Settings** in `config.json` → `catch_up`: `since`, `per_pillar`, `min_candidates_per_pillar` (10 when
+  missing), `flagship_venues`, `flagship_bonus`, `not_a_paper`. 均可在 `config.json` 的 `catch_up` 中修改。
 
 ### Topic deep-dives / 专题综述
 
@@ -327,12 +336,12 @@ switches to `--no-claude` by itself and everything else still works. Add `--no-c
 |---|---|
 | `python briefing.py` | Weekly radar: collect, score, update this week's report |
 | `python briefing.py --rescore` | Re-score every paper after a keyword change (0 calls) |
-| `python briefing.py --seed-pillars N` | Put the best N papers per pillar on the radar now |
+| `python briefing.py --seed-pillars N` | Put the best papers of each pillar on the radar now: at least N this week, and up to 10 unreviewed |
 | `python briefing.py --topic "..."` | Topic deep-dive (local + OpenAlex [+ IEEE]) |
 | `python briefing.py --recall "..."` | Search the local store only |
 | `python briefing.py --add "<DOI or title>" [--pillar N] [--cite]` | Pin a paper you care about |
 | `python briefing.py --cite / --select / --archive "<DOI or title words>"` | Mark papers from the terminal |
-| `python briefing.py --sync` | Apply 💾 Save Marks exports and rewrite the dashboard |
+| `python briefing.py --sync` | Apply 💾 Save Marks exports, refill each pillar to 10, rewrite the dashboard |
 | `python briefing.py --lineage` | Conference ↔ journal links for every catalog paper |
 | `python briefing.py --finalize` | Finalize this week's report now |
 | `--no-claude` | Add to any command: no AI calls |

@@ -212,38 +212,8 @@ def digest_beyond(store, cfg, log):
                         store, cfg, log, "Beyond-IEEE papers")
 
 
-def catch_up(store, cfg, week, today, per_pillar=None):
-    """Backfilled (archive) IEEE papers published since `catch_up.since` were filed before the radar saw
-    them as new, so no weekly report showed them. Re-score them and pull the best of each pillar into this
-    week (status candidate, `catchup` = week), up to `per_pillar` per pillar per week, so one pillar can't
-    crowd out the others. Flagship venues (JSSC, ISSCC, VLSI…) rank higher. `catch_up.not_a_paper` (regex
-    on title + abstract) skips tutorials, plenaries and forums. Returns {pillar: added}."""
-    cu = cfg.get("catch_up") or {}
-    quota = cu.get("per_pillar", 0) if per_pillar is None else per_pillar
-    kwmap, flagship = catalog._kw_pillars(cfg), set(cu.get("flagship_venues", []))
-    have = {}
-    for p in store.where("catchup=?", (week,)):
-        have[catalog.pillar_of(p, kwmap)] = have.get(catalog.pillar_of(p, kwmap), 0) + 1
-    cutoff = relations._ym(cu.get("since", "2025-01-01"))
-    # ISSCC tutorials, plenaries and forums are in the IEEE index like papers (one author, "I will present …")
-    not_paper = re.compile(cu["not_a_paper"]) if cu.get("not_a_paper") else None
-    picks = {k: [] for k in catalog.PILLARS if k}
-    for p in store.where("status='archive' AND grp='ieee' AND COALESCE(user_mark,'normal') != 'archived'"):
-        ym = relations._ym(p["published"])
-        if ym is None or ym < cutoff or (not_paper and not_paper.search(f"{p['title']}\n{p.get('abstract') or ''}")):
-            continue
-        s, hits = fetcher.score(p, cfg)
-        k = catalog.pillar_of({**p, "hits": hits}, kwmap)
-        if s >= cfg["min_score"] and k in picks:
-            picks[k].append((s + (cu.get("flagship_bonus", 0) if p["venue"] in flagship else 0), s, hits, p))
-    added = {}
-    for k, lst in picks.items():
-        lst.sort(key=lambda t: (-t[0], -(relations._ym(t[3]["published"]) or 0)))  # ties: newest first
-        for _, s, hits, p in lst[:max(0, quota - have.get(k, 0))]:
-            store.update(p["doi"], {"score": s, "hits": hits, "status": "candidate", "week": week, "catchup": week,
-                                    "related": fetcher.find_related(p, store)})
-            added[k] = added.get(k, 0) + 1
-    return added
+def pillar_line(added):
+    return ", ".join(f"Pillar {k} +{v}" for k, v in sorted(added.items())) or "nothing new"
 
 
 def synthesis(store, cfg, week, papers, beyond, notes, force, log):
@@ -547,8 +517,8 @@ def main():
         if a.add and not added:
             return 1
         if a.seed_pillars is not None:
-            n = catch_up(store, cfg, week, today, None if a.seed_pillars < 0 else a.seed_pillars)
-            print("Seed: " + (", ".join(f"Pillar {k} +{v}" for k, v in sorted(n.items())) or "nothing new"))
+            n = catalog.pillar_replenish(store, cfg, week, None if a.seed_pillars < 0 else a.seed_pillars)
+            print("Seed: " + pillar_line(n))
             print(f"Beyond pool: {fetcher.pool_search(cfg, store, today)} gate-passing papers searched")
         if not a.no_claude:
             try:
@@ -562,11 +532,17 @@ def main():
         if a.dry_run:
             return 0
         board = a.sync or marks or a.rescore or a.lineage or a.add or a.seed_pillars is not None  # not --recall/--topic
-        if board:
+        refilled = {}
+        if board:  # a mark may have dropped a pillar below the water mark, or freed a board slot
+            refilled = catalog.pillar_replenish(store, cfg, week)
+            print("Pillar replenish: " + pillar_line(refilled))
             print(f"Beyond board: +{fetcher.beyond_replenish(cfg, store, week)} from the pool")
         if board and not a.no_claude:
-            try:  # the board's new papers (and, with --seed-pillars, the seeded ones)
-                digest_new(store, cfg, week, today, print) if a.seed_pillars is not None else digest_beyond(store, cfg, print)
+            try:  # the board's new papers (and the replenished / seeded IEEE papers, ≤ digests_per_day_max)
+                if refilled or a.seed_pillars is not None:
+                    digest_new(store, cfg, week, today, print)
+                else:
+                    digest_beyond(store, cfg, print)
             except Exception as e:
                 print(f"Digest failed (retried next run): {e}", file=sys.stderr)
         refresh_catalog()
@@ -589,8 +565,7 @@ def main():
     print("Collecting (IEEE API / Crossref / OpenAlex, 0 tokens) ...")
     run = fetcher.collect(cfg, store, today, backfill=not a.no_backfill)
     print(f"{run['new']} new records, {len(run['new_candidates'])} new matches, IEEE calls today {run['ieee_calls']}")
-    n = catch_up(store, cfg, week, today)
-    print("Catch-up: " + (", ".join(f"Pillar {k} +{v}" for k, v in sorted(n.items())) or "nothing new"))
+    print("Catch-up: " + pillar_line(catalog.pillar_replenish(store, cfg, week)))
     print(f"Anchors: {pins.sync_anchors(store, cfg)} pinned as 🏛️ Classic / Anchor")
     print(f"Beyond board: +{fetcher.beyond_replenish(cfg, store, week)} from the pool")
 

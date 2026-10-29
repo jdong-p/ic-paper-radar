@@ -56,6 +56,69 @@ def pillar_of(p, kwmap):
     return max(votes, key=votes.get) if votes else 0
 
 
+OPEN_SQL = ("status IN ('candidate','reported') AND grp='ieee' AND COALESCE(user_mark,'normal')='normal' "
+            "AND COALESCE(cited,0)=0")  # 📋 unreviewed core papers (pinned anchors don't count)
+
+
+def pillar_counts(store, cfg, week):
+    """{pillar: [unreviewed 📋 candidates, papers pulled by catch-up this week (whatever their mark now)]}."""
+    kwmap = _kw_pillars(cfg)
+    out = {k: [0, 0] for k in PILLARS if k}
+    for i, (sql, args) in enumerate(((OPEN_SQL, ()), ("catchup=? AND grp='ieee'", (week,)))):
+        for p in store.where(sql, args):
+            k = pillar_of(p, kwmap)
+            if k in out:
+                out[k][i] += 1
+    return out
+
+
+def pillar_replenish(store, cfg, week, per_pillar=None, log=print, fresh=True):
+    """Hybrid catch-up, per pillar: pull the best backfilled `archive` papers published since
+    `catch_up.since` (score ≥ min_score; ranked by score + flagship_bonus, then newest) into this week
+    (status candidate, `catchup` = week), as many as max(min_candidates_per_pillar − unreviewed,
+    per_pillar − pulled this week). So a pillar always gets its weekly top `per_pillar` (3), and is topped
+    back up to the water mark (10) whenever curation drops it below. per_pillar = --seed-pillars N.
+    `not_a_paper` (regex on title + abstract) skips tutorials, plenaries and forums. fresh=True re-scores
+    the archive and saves changed scores; False ranks by the stored scores. 0 calls, 0 tokens.
+    Returns {pillar: added}."""
+    cu = cfg.get("catch_up") or {}
+    quota = cu.get("per_pillar", 0) if per_pillar is None else per_pillar
+    floor = cu.get("min_candidates_per_pillar", 10)  # also for configs written before the key existed
+    need = {k: max(floor - n_open, quota - n_week, 0) for k, (n_open, n_week) in pillar_counts(store, cfg, week).items()}
+    if not any(need.values()):
+        return {}
+    kwmap, flagship = _kw_pillars(cfg), set(cu.get("flagship_venues", []))
+    cutoff = relations._ym(cu.get("since", "2025-01-01"))
+    # ISSCC tutorials, plenaries and forums are in the IEEE index like papers (one author, "I will present …")
+    not_paper = re.compile(cu["not_a_paper"]) if cu.get("not_a_paper") else None
+    picks = {k: [] for k in need}
+    for p in store.where("status='archive' AND grp='ieee' AND COALESCE(user_mark,'normal') != 'archived'"):
+        ym = relations._ym(p["published"])
+        if ym is None or ym < cutoff or (not_paper and not_paper.search(f"{p['title']}\n{p.get('abstract') or ''}")):
+            continue
+        if fresh:
+            s, hits = fetcher.score(p, cfg)
+            if s != p["score"] or hits != (p.get("hits") or []):  # keeps the stored-score ranking current
+                store.update(p["doi"], {"score": s, "hits": hits})
+        else:
+            s, hits = p["score"] or 0, p.get("hits") or []
+        k = pillar_of({**p, "hits": hits}, kwmap)
+        if s >= cfg["min_score"] and need.get(k):
+            picks[k].append((s + (cu.get("flagship_bonus", 0) if p["venue"] in flagship else 0), s, hits, p))
+    added = {}
+    for k, lst in picks.items():
+        lst.sort(key=lambda t: (-t[0], -(relations._ym(t[3]["published"]) or 0)))  # ties: newest first
+        for _, s, hits, p in lst[:need[k]]:
+            store.update(p["doi"], {"score": s, "hits": hits, "status": "candidate", "week": week, "catchup": week,
+                                    "related": fetcher.find_related(p, store)})
+            added[k] = added.get(k, 0) + 1
+            log(f"  Pillar {k} +1: {p['venue']} {p['published']} ({s}) {p['title'][:70]}")
+    short = {k: need[k] - added.get(k, 0) for k in need if need[k] > added.get(k, 0)}
+    if short:
+        log("  Pillar archive used up: " + ", ".join(f"Pillar {k} short by {v}" for k, v in sorted(short.items())))
+    return added
+
+
 def key_numbers(p):
     m = re.search(r"\*\*Architecture & key metrics:\*\*\s*(.+)", p.get("digest") or "")
     if m:

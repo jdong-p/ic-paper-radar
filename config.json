@@ -143,10 +143,10 @@
                 "gene expression", "single-cell RNA"]
   },
 
-  "catch_up": {"since": "2025-01-01", "per_pillar": 3,
+  "catch_up": {"since": "2025-01-01", "per_pillar": 3, "min_candidates_per_pillar": 10,
                "flagship_venues": ["JSSC", "ISSCC", "VLSI", "CICC", "ESSERC", "SSC-L"], "flagship_bonus": 3,
                "not_a_paper": "(?i)^(tutorials?|forums?|plenary|keynote|panel|short course|evening session|special session)\\b|\\b(this (tutorial|talk|forum|short course|session)|I will (present|discuss|talk|cover|review))\\b",
-               "_note": "Pre-loaded (archive) papers published since `since` join the weekly report in a Catch-up section: the best `per_pillar` of each pillar per week. `not_a_paper` (regex on title + abstract) skips ISSCC/VLSI tutorials, forums and plenaries, which IEEE indexes like papers. `briefing.py --seed-pillars N` pulls N per pillar now."},
+               "_note": "Pre-loaded (archive) papers published since `since` join the weekly report in a Catch-up section: each pillar gets its best `per_pillar` per week, and is topped back up to `min_candidates_per_pillar` unreviewed 📋 Candidates whenever curation drops it below (daily run, --sync, mark flags, --rescore, --lineage, --add, --seed-pillars). `not_a_paper` (regex on title + abstract) skips ISSCC/VLSI tutorials, forums and plenaries, which IEEE indexes like papers. `briefing.py --seed-pillars N` pulls at least N per pillar this week now."},
 
   "paths": {
     "_note": "portable_mode: every output goes to ./output (paths.py). marks_extra_dirs: where the dashboard's '💾 Save Marks' downloads land.",
