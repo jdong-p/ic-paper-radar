@@ -216,7 +216,8 @@ def catch_up(store, cfg, week, today, per_pillar=None):
     """Backfilled (archive) IEEE papers published since `catch_up.since` were filed before the radar saw
     them as new, so no weekly report showed them. Re-score them and pull the best of each pillar into this
     week (status candidate, `catchup` = week), up to `per_pillar` per pillar per week, so one pillar can't
-    crowd out the others. Flagship venues (JSSC, ISSCC, VLSI…) rank higher. Returns {pillar: added}."""
+    crowd out the others. Flagship venues (JSSC, ISSCC, VLSI…) rank higher. `catch_up.not_a_paper` (regex
+    on title + abstract) skips tutorials, plenaries and forums. Returns {pillar: added}."""
     cu = cfg.get("catch_up") or {}
     quota = cu.get("per_pillar", 0) if per_pillar is None else per_pillar
     kwmap, flagship = catalog._kw_pillars(cfg), set(cu.get("flagship_venues", []))
@@ -224,10 +225,12 @@ def catch_up(store, cfg, week, today, per_pillar=None):
     for p in store.where("catchup=?", (week,)):
         have[catalog.pillar_of(p, kwmap)] = have.get(catalog.pillar_of(p, kwmap), 0) + 1
     cutoff = relations._ym(cu.get("since", "2025-01-01"))
+    # ISSCC tutorials, plenaries and forums are in the IEEE index like papers (one author, "I will present …")
+    not_paper = re.compile(cu["not_a_paper"]) if cu.get("not_a_paper") else None
     picks = {k: [] for k in catalog.PILLARS if k}
     for p in store.where("status='archive' AND grp='ieee' AND COALESCE(user_mark,'normal') != 'archived'"):
         ym = relations._ym(p["published"])
-        if ym is None or ym < cutoff:
+        if ym is None or ym < cutoff or (not_paper and not_paper.search(f"{p['title']}\n{p.get('abstract') or ''}")):
             continue
         s, hits = fetcher.score(p, cfg)
         k = catalog.pillar_of({**p, "hits": hits}, kwmap)

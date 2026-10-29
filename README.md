@@ -251,6 +251,28 @@ Run it every morning / 每天自动运行:
   0 7 * * * cd "$HOME/ic-paper-radar" && /usr/bin/python3 briefing.py >> radar.log 2>&1
   ```
 
+### Catch-up: older papers join your radar / 补录：旧论文进入雷达
+
+```bash
+python briefing.py                     # daily run: the best 3 per pillar join this week automatically
+python briefing.py --seed-pillars 8    # want more now? top each pillar up to 8 for this week
+```
+
+- **What it does:** papers already in the store (status `archive`) that were published since
+  `catch_up.since` (2025-01-01) never appeared as "new", so no report showed them. Each week the best
+  `catch_up.per_pillar` (3) of each pillar join the radar's 📋 Candidates and the report's Catch-up
+  section. Flagship venues (`flagship_venues`: JSSC, ISSCC, VLSI, CICC, ESSERC, SSC-L) rank higher.
+  库中 2025 年以来、从未作为"新论文"出现过的论文，每周每个 pillar 选最好的 3 篇加入雷达（旗舰会议/期刊优先）。
+- **Counting:** the 3 (or N) count every paper pulled this week, even after you ✅/⭐/🗄️ it. Reviewing
+  them doesn't bring new ones until next week; run `--seed-pillars N` with a larger N for more.
+  已整理的论文也计入本周名额；想立刻看更多，用更大的 N 运行 `--seed-pillars N`。
+- **Not papers:** `catch_up.not_a_paper` (a regex on title + abstract) skips ISSCC/VLSI tutorials, short
+  courses, forums and plenary talks, which IEEE lists like papers (about 24 in the shared database).
+  Leave it in `config.json`; delete it only if you want those entries back.
+  `not_a_paper` 正则会跳过 IEEE 当作论文收录的教程、短课程、论坛和全体报告（共享数据库中约 24 条），请保留。
+- **Settings** in `config.json` → `catch_up`: `since`, `per_pillar`, `flagship_venues`, `flagship_bonus`,
+  `not_a_paper`. 均可在 `config.json` 的 `catch_up` 中修改。
+
 ### Topic deep-dives / 专题综述
 
 ```bash

@@ -9,6 +9,8 @@ Instructions for an AI agent (Claude Code) opened in this folder:
 - Then run `python briefing.py --rescore` and `python briefing.py --seed-pillars 5 --no-claude`
   (`python3` on macOS) and report how many papers each pillar got. If a pillar gets 0–1 papers,
   propose broader keywords; if one pillar dominates, lower its generic weights.
+- If the user wants more papers in a pillar now, run `python briefing.py --seed-pillars N` with a larger N
+  (README.md, "Catch-up"). Keep `catch_up.not_a_paper` in `config.json`: it skips tutorials and forums.
 - Don't edit the `*.py` files unless the user asks. Never put API keys in `config.json`; the IEEE key
   goes in the `IEEE_API_KEY` environment variable.
 - Reports and digests are written in English.
