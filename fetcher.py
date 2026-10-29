@@ -354,17 +354,18 @@ def collect_beyond(cfg, store, today, week, log=print):
 
 def pool_search(cfg, store, today, log=print, force=False):
     """The 1-year Beyond-IEEE pool: per venue, one OpenAlex search (OR of key1_themes) over the last pool_days,
-    every pool_refresh_days (meta 'beyond_pool_searched'). 0 IEEE calls. Returns #gate-passing papers seen."""
+    every pool_refresh_days (meta 'beyond_pool_searched:<venue>', so a venue finished before the budget ran out
+    isn't searched again the next day). 0 IEEE calls. Returns #gate-passing papers seen."""
     b = cfg["beyond_ieee"]
     if not b.get("key1_themes"):  # Starter Edition: no Beyond-IEEE themes configured yet
-        return 0
-    last = store.meta("beyond_pool_searched")
-    if not force and last and (today - date.fromisoformat(last)).days < b.get("pool_refresh_days", 7):
         return 0
     since = (today - timedelta(days=b.get("pool_days", 365))).isoformat()
     search = " OR ".join(f'"{t}"' for t in b["key1_themes"])
     total, failed = 0, False
     for bv in cfg["beyond_ieee_venues"]:
+        last = store.meta(f"beyond_pool_searched:{bv['short']}")
+        if not force and last and (today - date.fromisoformat(last)).days < b.get("pool_refresh_days", 7):
+            continue
         got, page, waits = [], 1, 0
         while page:
             q = urllib.parse.urlencode({"filter": f"primary_location.source.issn:{bv['issn']},from_publication_date:{since},type:article",
@@ -388,8 +389,9 @@ def pool_search(cfg, store, today, log=print, force=False):
                 log(f"  [beyond/pool] {bv['short']} page {page}: {e}")
                 failed = True
                 break
-        if failed and not got:
-            break  # budget gone: don't try the other venues today
+            # Fixed 2026-10-29: this block used to sit under the `if failed` below (after its break), so it never
+            # ran: page 1 of the first venue was fetched again and again until OpenAlex's daily budget ran out,
+            # and the pool stayed empty
             for w in r["results"]:
                 doi = (w.get("doi") or "").replace("https://doi.org/", "").lower()
                 if doi and w.get("title"):
@@ -399,11 +401,14 @@ def pool_search(cfg, store, today, log=print, force=False):
                                 "oa_id": w["id"].rsplit("/", 1)[-1], "cited_by": w.get("cited_by_count"), "source": "openalex",
                                 "refs": ["oa:" + x.rsplit("/", 1)[-1] for x in w.get("referenced_works") or []]})
             page = page + 1 if len(r["results"]) == 200 and page < 30 else None
+        if failed and not got:
+            break  # budget gone: don't try the other venues today
         n = _pool_add(got, bv, cfg, store, today)
         total += n
         log(f"  pool {bv['short']:<12} {len(got):>5} matched the themes ({b.get('pool_days', 365)} d), {n} passed the gate")
-    if not failed:  # a venue that failed is searched again on the next run
-        store.meta("beyond_pool_searched", today.isoformat())
+        if failed:
+            break  # cut off mid-venue: this venue and the rest are searched again on the next run
+        store.meta(f"beyond_pool_searched:{bv['short']}", today.isoformat())
     return total
 
 
