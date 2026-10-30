@@ -310,6 +310,22 @@ plus recent work, written to `output/Topic_Dives/`. It works even before you con
 第一层选视图；在 📅 Weekly Brief 里第二层按 pillar（来自 `config.json`）或 🌍 Beyond IEEE 筛选，在 🔎 Topic Dives
 里按专题筛选；第三层按整理状态筛选，切换 pillar 时保持不变。拖动按钮或用 ⚙️ Customize views 调整顺序。
 
+### Short pillar labels and the phone layout / 短标签与手机布局
+
+- **Short labels:** each pillar gets a short label such as `P1 · SAR ADC`. It is used on the 📅 Weekly Brief
+  pillar buttons (full name on hover), as a pill in the Pillar column (`🌍 Beyond` for Beyond IEEE), and, on a
+  touchscreen with a pillar selected, as a `📌 Pillar 1: …` line above the list. Set your own in `config.json`
+  (`"pillar_short": ["SAR ADC", "PLL"]`, same order as `pillars`); a pillar without one gets the first 1–2 key
+  words of its name (`All-Digital PLLs & Clock Generation` → `P2 · All-Digital PLLs`).
+- **Phone (≤ 768 px; wider screens are unchanged):** each paper is a card (date · venue · score · Si · pillar,
+  then the full-width title, note and key numbers, and 38 px ✅ Select / ⭐ Cite / 🗄️ Archive buttons); a
+  `Sort: Date | Score | Venue` row replaces the table header; the three bars swipe sideways; the `.bib`
+  downloads, 🏷️ Tags and ◐ fold behind `⋯`; inputs use 16 px so iOS Safari doesn't zoom. Open
+  `output/DASHBOARD.html` on the phone, or use Add to Home Screen.
+
+每个 pillar 有短标签（如 `P1 · SAR ADC`），可在 `config.json` 的 `pillar_short` 中设置，未设置时取名称的前 1–2 个关键词。
+手机上（≤ 768 px）论文显示为卡片，按钮 38 px，三层导航可左右滑动，次要按钮收进 `⋯`；电脑上布局不变。
+
 ### Curation / 整理论文
 
 On the dashboard, click ✅ Select / ⭐ Cite / 🗄️ Archive. Clicks are kept in your browser; **💾 Save

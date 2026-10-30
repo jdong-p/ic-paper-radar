@@ -158,6 +158,34 @@ tr.subbanner td{color:var(--muted);font-size:12.5px;font-weight:600;padding:4px 
 .cur{display:inline-flex;gap:6px;margin:4px 0}.pill.live{border-color:var(--ok);color:var(--ok)}
 .pill.offline{border-color:var(--warn);color:var(--warn)}blockquote{border-left:3px solid var(--accent);margin:8px 0;padding:2px 12px;color:var(--muted)}
 @media (max-width:700px){.hide-sm{display:none}main,.filters,header.bar{padding-left:10px;padding-right:10px}.report{padding:8px 12px}}
+.tag.ppill{white-space:nowrap;font-weight:600}.pnote,.msort,.msec{display:none}
+.pnote{margin:0 0 8px;padding:6px 10px;border-left:3px solid var(--accent);background:var(--chip);border-radius:6px;font-size:13.5px}
+@media (max-width:768px),(hover:none){.pnote.on{display:block}}
+/* iPhone (v2.17): one-line swipe bars, a compact header, each paper as a card; desktop above 768px is unchanged */
+@media (max-width:768px){
+header.bar{gap:6px;padding-top:6px;padding-bottom:6px}header.bar .btn{padding:4px 8px}
+header.bar h1{font-size:15px;max-width:40vw;margin-right:4px}header.bar .sec{display:none}header.bar.showsec .sec{display:inline-block}
+.msec{display:inline-block}
+.filters{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none}.filters.srow{flex-wrap:wrap}
+.filters::-webkit-scrollbar{display:none}.filters>*{flex:none}.filters .push{flex:0 0 8px}
+.menu{position:fixed;left:10px;right:10px;max-height:60vh}
+.menu.float{z-index:100}
+input.search,input.note,select{font-size:16px}input.search{min-width:0;flex:1 1 100%}input.note{min-width:0;width:100%}
+.msort{display:flex;gap:6px;align-items:center;margin:0 0 8px}
+.tablewrap{overflow:visible}table.papers,table.papers tbody{display:block;background:transparent}table.papers thead{display:none}
+table.papers tr.paper{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;margin:0 0 10px;padding:10px 12px;
+background:var(--card);border:1px solid var(--line);border-radius:12px}table.papers tr.paper.cite{background:var(--citebg)}
+table.papers tr.paper td{display:block;border:0;padding:0;font-size:13px}
+table.papers td.c-date,table.papers td.c-score{color:var(--muted)}table.papers td.c-venue{background:var(--chip);border-radius:6px;padding:0 6px;font-weight:600}
+table.papers td.c-title{order:2;flex:1 1 100%;font-size:15px;line-height:1.4}table.papers td.c-key{order:3;flex:1 1 100%;display:block}
+table.papers td.c-key:empty{display:none}table.papers td.c-cur{order:4;flex:1 1 100%}
+table.papers .cur{display:flex;width:100%;margin:2px 0 0}table.papers .cur .btn{flex:1;min-height:38px;font-size:13.5px}
+table.papers .sibtn{min-height:30px}
+table.papers tr.detail,table.papers tr.banner,table.papers tr.subbanner{display:block;margin:-6px 0 10px}
+table.papers tr.detail td,table.papers tr.banner td,table.papers tr.subbanner td{display:block;border-radius:0 0 12px 12px}
+table.papers tr.detail td{padding:10px 12px;overflow-wrap:anywhere}table.papers tr.banner,table.papers tr.subbanner{margin:0 0 8px}
+table.papers tr.empty td{display:block}
+}
 """
 
 JS_COMMON = r"""
@@ -400,7 +428,8 @@ try { const t = localStorage.getItem('paper_radar_theme'); if (t) document.docum
 def _page(title, head_extra, bar, body, data, script, mermaid=False):
     blob = json.dumps(data, ensure_ascii=False).replace("</", "<\\/")
     return f"""<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=5">
+<meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes">
 <title>{html.escape(title)}</title><style>{CSS}</style>{head_extra}</head>
 <body><header class="bar">{bar}</header>{body}
 <script id="radar-data" type="application/json">{blob}</script>
@@ -414,13 +443,15 @@ def _bar(title, home=None, extra=""):
     return (f'<h1>{html.escape(title)}</h1>'
             + (f'<a class="btn" href="{home}">← Dashboard</a>' if home else "") + extra
             + '<button id="syncpill" class="btn pill" onclick="pillClick()">⏳ Connecting…</button>'
-            + '<button class="btn" onclick="downloadBib(false)" title="⭐ Cite papers only, for Overleaf">'
+            # on a phone the secondary buttons fold behind ⋯ (CSS .sec / .msec)
+            + '<button class="btn msec" onclick="this.parentElement.classList.toggle(\'showsec\')" title="More">⋯</button>'
+            + '<button class="btn sec" onclick="downloadBib(false)" title="⭐ Cite papers only, for Overleaf">'
               '📥 Download cite.bib (⭐ <span id="bibn" class="count">0</span>)</button>'
-            + '<button class="btn" onclick="downloadBib(true)" title="✅ Selected + ⭐ Cite">'
+            + '<button class="btn sec" onclick="downloadBib(true)" title="✅ Selected + ⭐ Cite">'
               '📥 Download selected_pool.bib (✅+⭐ <span id="pooln" class="count">0</span>)</button>'
             + '<button class="btn" onclick="saveMarks()" title="Only needed offline">💾 Save Marks '
               '(<span id="pending" class="count">0</span> queued)</button>'
-            + '<button class="btn" onclick="theme()" title="light/dark">◐</button>')
+            + '<button class="btn sec" onclick="theme()" title="light/dark">◐</button>')
 
 
 # ---------- data ----------
@@ -748,6 +779,7 @@ function render() {
   const ae = document.activeElement;
   if (ae && ae.classList && ae.classList.contains('note')) { renderLater = true; return; }
   renderLater = false;
+  document.querySelectorAll('body > .menu').forEach(e => e.remove());
   const c = counts();
   mainBar(c);
   const tb = document.getElementById('tagsbtn'); if (tb) tb.classList.toggle('on', tagsOn);
@@ -776,7 +808,17 @@ function render() {
     html = rows.map(rowHtml).join('');
   }
   document.getElementById('nrows').textContent = n;
-  document.getElementById('tbody').innerHTML = html || '<tr><td colspan="8" class="muted">No papers match.</td></tr>';
+  document.getElementById('tbody').innerHTML = html || '<tr class="empty"><td colspan="8" class="muted">No papers match.</td></tr>';
+  // touchscreens have no hover: the selected pillar's full name as a line above the list
+  const px = view === 'weekly' && PILLARS.find(x => x.k === wsel), pn = document.getElementById('pillarnote');
+  pn.classList.toggle('on', !!px); pn.textContent = px ? '📌 ' + px.name : '';
+  document.querySelectorAll('.msort [data-sort]').forEach(b => {
+    const on = b.dataset.sort === sortKey; b.classList.toggle('on', on);
+    b.textContent = b.dataset.sort[0].toUpperCase() + b.dataset.sort.slice(1) + (on ? (sortDir < 0 ? ' ↓' : ' ↑') : '');
+  });
+  // phone: the swipe bars scroll sideways and would clip a 📁 menu, so it is fixed below its button
+  const m = document.querySelector('.filters .menu');
+  if (m && innerWidth <= 768) { m.style.top = (m.parentElement.getBoundingClientRect().bottom + 4) + 'px'; m.classList.add('float'); document.body.appendChild(m); }
 }
 function rowHtml(p) {
     const isOpen = open.has(p.doi);
@@ -794,11 +836,11 @@ function rowHtml(p) {
       `onclick="event.stopPropagation();tagOpen.add('${p.doi}');render()">+${tagList.length} tag${tagList.length > 1 ? 's' : ''}</span>`;
     const note = noteOf(p.doi);  // the user's 🏷️ Tech note: always visible, even with the tags collapsed
     const main = `<tr class="paper ${citedOf(p.doi)?'cite':''}" id="r-${CSS.escape(p.doi)}" onclick="tg('${p.doi}')">` +
-      `<td title="${esc(p.raw_date)}">${p.date}</td><td>${p.venue}</td><td><a href="https://doi.org/${p.doi}" target="_blank" onclick="event.stopPropagation()">${esc(p.title)}</a>` +
+      `<td class="c-date" title="${esc(p.raw_date)}">${p.date}</td><td class="c-venue">${p.venue}</td><td class="c-title"><a href="https://doi.org/${p.doi}" target="_blank" onclick="event.stopPropagation()">${esc(p.title)}</a>` +
       (note ? `<div><span class="tag notetag" title="Your 🏷️ Tech note">🏷️ ${esc(note)}</span></div>` : '') +
-      `<div class="muted">${esc(p.authors)} ${tags}</div></td><td class="count">${p.score}</td>` +
-      `<td>${siCell(p.doi, p.silicon_auto, 'button')}</td><td class="hide-sm">${p.pillar||'–'}</td>` +
-      `<td class="hide-sm muted">${esc(p.key)}</td><td data-cur="${p.doi}">${curButtons(p.doi)}</td></tr>`;
+      `<div class="muted">${esc(p.authors)} ${tags}</div></td><td class="count c-score">${p.score}</td>` +
+      `<td class="c-si">${siCell(p.doi, p.silicon_auto, 'button')}</td><td class="hide-sm c-pillar">${pillarPill(p)}</td>` +
+      `<td class="hide-sm muted c-key">${esc(p.key)}</td><td class="c-cur" data-cur="${p.doi}">${curButtons(p.doi)}</td></tr>`;
     const det = isOpen ? `<tr class="detail"><td colspan="8"><p class="muted">🔬 Silicon: ${siCell(p.doi, p.silicon_auto, 'button')} ` +
       `click to cycle ✅ Silicon-Verified → ⚠️ Simulation-Only → automatic (${esc(p.silicon_auto)})</p>` +
       `<p class="muted noteline">🏷️ Tech note: <input class="note" data-doi="${p.doi}" value="${escA(note)}" maxlength="200" ` +
@@ -807,6 +849,12 @@ function rowHtml(p) {
       `<details><summary class="muted">Abstract · hits · BibTeX</summary><p>${esc(p.abstract)||'<span class=muted>No abstract.</span>'}</p>` +
       `<p class="muted">${p.hits.map(h=>'<span class=tag>'+esc(h)+'</span>').join('')}</p><pre>${esc(p.bib)}</pre></details></td></tr>` : '';
     return main + det;
+}
+// the Pillar column: 'P1 · Temp' (full name on hover) or 🌍 Beyond
+function pillarPill(p) {
+  if (p.beyond) return '<span class="tag ppill">🌍 Beyond</span>';
+  const x = PILLARS.find(x => x.n === p.pillar);
+  return x ? `<span class="tag ppill" title="${escA(x.name)}">${esc(x.short)}</span>` : '–';
 }
 function esc(s) { return String(s||'').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
 function escA(s) { return esc(s).replace(/"/g, '&quot;'); }
@@ -841,7 +889,7 @@ def write_dashboard(store, cfg, path):
             "prefs": curation.load_prefs(cfg),  # the shared bar layout, for pages opened offline
             "marks": {r["doi"]: r["mark"] for r in recs}, "bib": {r["doi"]: r["bib"] for r in recs},
             "notes": {r["doi"]: r["note"] for r in recs if r["note"]},
-            "pillars": [{"k": f"p{i}", "n": i, "short": f"Pillar {i}", "name": f"Pillar {i}: {n}"}  # tier 2 of 📅 Weekly Brief
+            "pillars": [{"k": f"p{i}", "n": i, "short": catalog.pillar_short(i, n), "name": f"Pillar {i}: {n}"}  # tier 2 of 📅 Weekly Brief
                         for i, n in enumerate(cfg.get("pillars") or [], 1)],
             "weeks": weekly_reports(cfg), "sync": curation.page_sync_config(cfg),
             "welcome": not fetcher.pillars_ready(cfg)}
@@ -856,16 +904,19 @@ Open <code>README.md</code> to configure your research domains with AI"""
     body = welcome + f"""<div class="filters" id="filters"></div>
 <div class="filters topicbar" id="tier2" style="display:none"></div>
 <div class="filters tier3" id="statusbar" style="display:none"></div>
-<div class="filters"><input id="q" class="search" placeholder="Search title, author, venue, numbers, 🏷️ notes (e.g. 'SAR', 'PLL', 'nW', 'ISSCC')…">
+<div class="filters srow"><input id="q" class="search" placeholder="Search title, author, venue, numbers, 🏷️ notes (e.g. 'SAR', 'PLL', 'nW', 'ISSCC')…">
 <span class="muted" style="align-self:center"><span id="nrows" class="count">0</span> papers · generated {data['generated']} ·
 <a href="INDEX.md">INDEX.md</a></span></div>
-<main><div class="tablewrap"><table><thead><tr><th class="sort" onclick="sortBy('date')">Date</th>
+<main><div id="pillarnote" class="pnote"></div>
+<div class="msort"><span class="muted">Sort:</span><button class="btn" data-sort="date" onclick="sortBy('date')">Date</button>
+<button class="btn" data-sort="score" onclick="sortBy('score')">Score</button><button class="btn" data-sort="venue" onclick="sortBy('venue')">Venue</button></div>
+<div class="tablewrap"><table class="papers"><thead><tr><th class="sort" onclick="sortBy('date')">Date</th>
 <th class="sort" onclick="sortBy('venue')">Venue</th><th class="sort" onclick="sortBy('title')">Title</th>
 <th class="sort" onclick="sortBy('score')">Score</th><th>Si</th><th class="hide-sm">Pillar</th><th class="hide-sm">Key numbers</th>
 <th>Curation</th></tr></thead><tbody id="tbody"></tbody></table></div>
 <p class="muted">Click a row for the full digest. Clicks are kept in this browser; <b>💾 Save Marks</b> sends them to the
 Radar (curation_marks.json in output/ or Downloads), applied on the next run or <code>briefing.py --sync</code>.</p></main>"""
-    tags_btn = ('<button id="tagsbtn" class="btn" onclick="toggleTags()" title="Show every row\'s tags '
+    tags_btn = ('<button id="tagsbtn" class="btn sec" onclick="toggleTags()" title="Show every row\'s tags '
                 '(week, catch-up, anchor, 📈, topic) or collapse them into a +N pill">🏷️ Tags</button>')
     Path(path).write_text(_page("IC Paper Radar — Dashboard", "", _bar("📡 IC Paper Radar", extra=tags_btn), body, data, DASH_JS),
                           encoding="utf-8")

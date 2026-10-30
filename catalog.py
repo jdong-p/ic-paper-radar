@@ -19,6 +19,11 @@ import fetcher
 import relations
 
 PILLARS = {0: "Other IEEE"}  # filled from config.json "pillars" by configure() (fetcher.load_config calls it)
+# short theme labels for narrow screens (v2.17): 'P1 · Temp' from config.json "pillar_short"; a pillar without one
+# gets 1–2 key words of its name
+PILLAR_SHORT = {}
+_STOP = {"and", "or", "the", "of", "for", "in", "on", "with", "a", "an", "to", "sensor", "sensors", "interfaces",
+         "interface", "design", "circuits", "circuit", "systems", "system", "ultra", "low", "power", "low-power", "ultra-low-power", "sub-1µw"}
 # Only digests written with the reader's own pillars carry a trustworthy "Pillar:" line. The pre-loaded
 # digests (en-v2/en-v3) were written for someone else's pillars, so their Pillar line is ignored.
 PILLAR_DIGEST_VERS = {"starter-v1"}
@@ -30,6 +35,18 @@ def configure(cfg):
     for i, name in enumerate(cfg.get("pillars") or [], 1):
         PILLARS[i] = f"Pillar {i} — {name}"
     PILLARS[0] = "Other IEEE"
+    PILLAR_SHORT.clear()
+    for i, s in enumerate(cfg.get("pillar_short") or [], 1):
+        if s and str(s).strip():
+            PILLAR_SHORT[i] = str(s).strip()
+
+
+def pillar_short(k, name=None):
+    if k in PILLAR_SHORT:
+        return f"P{k} · {PILLAR_SHORT[k]}"
+    t = re.sub(r"^\s*Pillar\s*\d+\s*[:—–-]?\s*", "", name or PILLARS.get(k, ""), flags=re.I)
+    words = [w for w in re.findall(r"[A-Za-zµ][\w/µ-]*", t) if w.lower() not in _STOP]
+    return f"P{k} · " + (" ".join(words[:2]) or f"Pillar {k}")
 
 
 def _kw_pillars(cfg):

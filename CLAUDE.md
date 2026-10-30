@@ -3,7 +3,7 @@
 Instructions for an AI agent (Claude Code) opened in this folder:
 
 - Read `README.md` first. To set up the user's research pillars, follow its "AI Setup Prompt" schema
-  and rules, and edit **only** these keys of `config.json`: `pillars`, `positive_keywords`,
+  and rules, and edit **only** these keys of `config.json`: `pillars`, `pillar_short` (optional 1–2 word labels, same order), `positive_keywords`,
   `negative_keywords`, `negative_override`, `anchors`, `vip_authors`, `beyond_ieee.key1_themes`
   (and `contact_email` if the user gives one). Keep the file valid JSON.
 - Then run `python briefing.py --rescore` and `python briefing.py --seed-pillars 5 --no-claude`

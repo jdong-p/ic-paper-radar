@@ -6,6 +6,8 @@
   "contact_email": "",
 
   "pillars": [],
+  "_pillar_short_note": "Optional, same order as pillars: a 1-2 word label per pillar for phones and the Pillar column, shown as 'P1 · <label>'. Leave empty to derive it from the pillar name.",
+  "pillar_short": [],
 
   "_keyword_note": "Plain keys: word-boundary match, case-insensitive unless ALL CAPS; a space or hyphen matches either, and a plural -s/-es also matches (keys that differ only by space/hyphen count once). Keys 're:<label>::<regex>' are raw regexes (case-sensitive unless (?i)); <label> is shown in the report. Weight 0 = section heading '_pillarN_<slug>': every key below it belongs to pillar N (N = position in 'pillars', starting at 1).",
   "positive_keywords": {},
