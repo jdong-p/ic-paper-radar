@@ -197,10 +197,11 @@ HEAD = ["| Date | Venue | Title | First … Last Author | Silicon | Status | Key
 
 
 def _row(p, cfg):
+    note = f"🏷️ **{p['user_note']}** · " if p.get("user_note") else ""  # the user's 🏷️ Tech note (v2.15)
     return (f"| {_cell(str(p.get('published') or '')[:10])} | {p['venue']} | "
             f"[{_cell(fetcher.tidy_tex(p['title']))}](https://doi.org/{p['doi']}) | {_cell(_first_last(p))} | {silicon(p, cfg)} | "
             f"{PIN_TAG.get(p.get('pin'), p['status'])}{' · W' + p['week'][-2:] if p.get('week') else ''}"
-            f"{' · 📈 Ext.' if p.get('lineage') else ''} | {_cell(key_numbers(p))} | "
+            f"{' · 📈 Ext.' if p.get('lineage') else ''} | {_cell(note + key_numbers(p))} | "
             f"{curation.boxes(p['doi'], curation.mark_of(p), table=True)} |")
 
 

@@ -9,7 +9,7 @@ status: archive   backfilled corpus paper (for relations; recent ones can join a
         pinned    anchor or --add-ed paper (pins.py): always in the catalog, never re-scored or finalized
         pool      Beyond-IEEE paper that passed the gate, waiting for a slot on the 10-paper board
 user_mark (stage): normal (📋 Candidate) | selected (✅) | archived (🗄️); cited 0/1 (⭐), independent of the
-stage since v2.9 — see curation.py
+stage since v2.9 — see curation.py; user_note = the 🏷️ Tech note typed in the dashboard (v2.15)
 """
 import json
 import sqlite3
@@ -44,7 +44,8 @@ MIGRATIONS = {"grp": "TEXT DEFAULT 'ieee'",      # 'ieee' or 'beyond' (Nature/Sc
                                                    # 'simulation_only'; NULL = automatic guess (v2.10)
               "catchup": "TEXT",                  # week an archive paper was pulled into as catch-up
               "pin": "TEXT",                      # 'anchor' | 'manual' (pins.py)
-              "pillar": "INTEGER"}                # user-chosen pillar (--add --pillar); overrides the guess
+              "pillar": "INTEGER",                # user-chosen pillar (--add --pillar); overrides the guess
+              "user_note": "TEXT"}                # 🏷️ Tech note: the user's key technique / takeaway (v2.15)
 
 
 class Store:

@@ -16,9 +16,11 @@ TBioCAS、Sensors Letters），并可选跟踪 Nature / Science。它按照**你
 - **Zero dependencies / 零依赖:** Python **3.11+** standard library only. No `pip install`.
   只需 Python 3.11+ 标准库，无需 `pip install`。
 - **Runs anywhere / 跨平台:** Windows, macOS and Linux. Everything is written to `./output`.
-- **Interactive `output/DASHBOARD.html` / 交互式面板:** filter by pillar, search titles, authors and
-  numbers (`nW`, `ENOB`, `fs`), read abstracts and digests, and click ✅ Select / ⭐ Cite / 🗄️ Archive.
-  按 pillar 筛选，搜索标题、作者和数字，查看摘要，并标记 ✅ 选中 / ⭐ 引用 / 🗄️ 归档。
+- **Interactive `output/DASHBOARD.html` / 交互式面板:** three bars (view → pillar or topic → curation
+  stage), search titles, authors, numbers (`nW`, `ENOB`, `fs`) and your own notes, read abstracts and
+  digests, click ✅ Select / ⭐ Cite / 🗄️ Archive, and type a 🏷️ Tech note per paper.
+  三层导航（视图 → pillar 或专题 → 整理状态），搜索标题、作者、数字和你的笔记，查看摘要，标记 ✅ 选中 / ⭐ 引用 /
+  🗄️ 归档，并为每篇论文写一条 🏷️ 技术笔记。
 - **BibTeX export / 自动导出 BibTeX:** `output/cite.bib` (⭐ papers, for Overleaf) and
   `output/selected_pool.bib` (✅ + ⭐), rewritten on every run and downloadable from the dashboard.
 - **Weekly reports / 每周报告:** `output/Weekly_Briefings/<YYYY-Www>.md` with a ranked table, a citation
@@ -293,6 +295,21 @@ python briefing.py --recall "ring oscillator"      # local store only, 0 calls
 plus recent work, written to `output/Topic_Dives/`. It works even before you configure pillars.
 `--topic` 结合本地库、OpenAlex 和 IEEE API（如有 key），输出经典论文与近期进展；无需先配置 pillars。
 
+### Dashboard: three bars / 面板：三层导航
+
+1. **Views (top bar):** All · 📋 Candidate · ✅ Selected · ⭐ To Cite · **📅 Weekly Brief** ·
+   **🔎 Topic Dives** · 📁 More Views (🔬 Silicon-Verified Only · 🏛️ Anchors & Pinned · 📈 Journal
+   Extensions · 🗄️ Archived · ⚙️ Customize views).
+2. **Inside 📅 Weekly Brief:** All Weekly · one pill per pillar from your `config.json` · 🌍 Beyond IEEE,
+   plus **📄 Open Weekly Report** (the latest week, with a week selector once there are several).
+   **Inside 🔎 Topic Dives:** All dives · one pill per `--topic` dive · 📄 Open Topic Report.
+3. **Curation stage, under either:** All (everything but 🗄️ Archived) · 📋 Candidate · ✅ Selected ·
+   ⭐ Cite · 📁 More (🏛️ Anchors & Pinned · 🗄️ Archived). The counts follow the pill above, and the stage
+   stays set while you switch pillars (e.g. 📋 Candidate across Pillar 1 → 2 → 3).
+
+第一层选视图；在 📅 Weekly Brief 里第二层按 pillar（来自 `config.json`）或 🌍 Beyond IEEE 筛选，在 🔎 Topic Dives
+里按专题筛选；第三层按整理状态筛选，切换 pillar 时保持不变。拖动按钮或用 ⚙️ Customize views 调整顺序。
+
 ### Curation / 整理论文
 
 On the dashboard, click ✅ Select / ⭐ Cite / 🗄️ Archive. Clicks are kept in your browser; **💾 Save
@@ -301,6 +318,20 @@ or `python briefing.py --sync` applies it. **📥 Download cite.bib** exports yo
 From the terminal: `python briefing.py --cite "<DOI or title words>"` (also `--select`, `--archive`,
 `--uncite`, `--unselect`, `--unarchive`).
 在面板上点击按钮标记论文；点 **💾 Save Marks** 下载 `curation_marks.json`，下次运行或 `--sync` 时写入数据库。
+
+**🏷️ Tech note / 技术笔记:** expand a paper and type one short phrase in the **🏷️ Tech note** field below
+the 🔬 Silicon line (the key technique or takeaway, e.g. "split CDAC + kT/C cancellation"). Enter or
+leaving the field saves it; Esc restores the old text. It's kept in your browser like a click, shows as
+a 🏷️ badge under the title, and the search box finds it. 💾 Save Marks writes it into
+`curation_marks.json` next to the marks, and `--sync` (or the next run) stores it in the database and in
+`MASTER_TABLE.md` (Key Numbers: `🏷️ **note** · …`). One line, at most 200 characters; an empty note clears it.
+展开论文，在 🔬 Silicon 下方的 **🏷️ Tech note** 输入一句话（回车或离开输入框即保存，Esc 撤销）；
+💾 Save Marks 后运行 `--sync` 写入数据库和 `MASTER_TABLE.md`。最多 200 字符，留空即清除。
+
+```json
+{"marks": {"10.1109/jssc.2026.1234567": "selected+cite"},
+ "notes": {"10.1109/jssc.2026.1234567": "split CDAC + kT/C cancellation"}}
+```
 
 ### Optional: free IEEE API key / 可选：免费 IEEE API key
 
@@ -381,4 +412,5 @@ switches to `--no-claude` by itself and everything else still works. Add `--no-c
 | `HTTP Error 429` from OpenAlex | OpenAlex's daily free budget is used up; the run continues and retries next time. Setting `contact_email` helps |
 | `python` not found / opens the Microsoft Store (Windows) | Install Python 3.11+ from python.org with "Add python.exe to PATH", or use `py` |
 | `xcrun: error` (macOS) | Install Python from python.org, or run `xcode-select --install` once |
-| Dashboard has no pillar buttons | Run `--rescore` and `--seed-pillars 5` after editing `config.json` |
+| No pillar pills under 📅 Weekly Brief | Run `--rescore` and `--seed-pillars 5` after editing `config.json` |
+| A 🏷️ note or click didn't reach `MASTER_TABLE.md` | 💾 Save Marks, then `python briefing.py --sync` |

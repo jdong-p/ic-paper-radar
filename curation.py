@@ -10,6 +10,8 @@ A third, also independent (v2.10): `user_silicon` = the user's Silicon-Verified 
 Pages, the sync server and curation_marks.json carry all three as one "mark" string: the stage, "+cite" when
 cited, "+si" / "+sim" for a silicon override ("selected+cite+si", "normal+sim"); the pre-v2.9 mark "cite"
 reads as "selected+cite". The Markdown checkboxes show stage and ⭐ only; editing them keeps the override.
+The 🏷️ Tech note (`user_note`, v2.15) travels next to the marks: POST /mark {"notes": {doi: text}},
+GET /status "notes", and "notes" in curation_marks.json; "" clears it. MASTER_TABLE.md shows it (read-only).
 
 Every report line carries the paper's DOI:
   [ ] ✅ Select | [ ] ⭐ Cite | [ ] 🗄️ Archive <!-- doi:10.1109/... -->
@@ -71,6 +73,23 @@ def set_state(store, doi, stage, cited, si=KEEP):
     if si is not KEEP:
         upd["user_silicon"] = si
     store.update(doi, upd)
+
+
+NOTE_MAX = 200
+
+
+def clean_note(note):
+    """A 🏷️ Tech note as stored (v2.15): one line, at most NOTE_MAX characters; empty → None (cleared)."""
+    s = " ".join(str(note or "").split())[:NOTE_MAX]
+    return s or None
+
+
+def set_note(store, doi, note):
+    store.update(doi, {"user_note": clean_note(note)})
+
+
+def all_notes(store):
+    return {r[0]: r[1] for r in store.db.execute("SELECT doi, user_note FROM papers WHERE COALESCE(user_note,'') != ''")}
 
 
 def cite_on(stage):
@@ -189,18 +208,22 @@ def sync_markdown_marks(store, cfg, log=print, read_edits=True):
     read_edits=False only normalises: use it at the end of a run, when files may still show a state that a
     CLI flag (--cite/--uncite …) just changed and would otherwise be mistaken for a user edit."""
     files = report_files(cfg)
-    current = all_marks(store)
-    wanted = {}
+    current, notes = all_marks(store), all_notes(store)
+    wanted, wanted_notes = {}, {}
     exports = marks_exports(cfg) if read_edits else []
     sources = sorted(files + exports, key=lambda f: f.stat().st_mtime) if read_edits else []
     for f in sources:  # oldest first: later files overwrite earlier ones
         if f.suffix == ".json":
             try:
-                for doi, mark in json.loads(f.read_text(encoding="utf-8")).get("marks", {}).items():
+                data = json.loads(f.read_text(encoding="utf-8"))
+                for doi, mark in data.get("marks", {}).items():
                     st = parse_mark(mark)
                     mark = st and fmt_mark(*st)  # canonical (legacy 'cite' included)
                     if doi in current and st and mark != current[doi]:
                         wanted[doi] = (mark, f.name)
+                for doi, note in (data.get("notes") or {}).items():  # 🏷️ Tech notes (v2.15); "" clears
+                    if doi in current and clean_note(note) != notes.get(doi):
+                        wanted_notes[doi] = (clean_note(note), f.name)
             except (ValueError, AttributeError) as e:
                 log(f"  curation: {f.name} unreadable ({e}); left in place")
                 exports.remove(f)
@@ -214,6 +237,9 @@ def sync_markdown_marks(store, cfg, log=print, read_edits=True):
         set_state(store, doi, *parse_mark(mark))
         current[doi] = mark
         log(f"  curation: {doi} → {mark} (from {src})")
+    for doi, (note, src) in wanted_notes.items():
+        set_note(store, doi, note)
+        log(f"  curation: {doi} 🏷️ {note or '(cleared)'} (from {src})")
     # applied once: the newest export is kept as IC_Paper_Radar/_system/curation_marks.applied.json for reference,
     # older and numbered duplicates ("curation_marks (1).json", Downloads copies) are deleted
     applied_copy = system_dir(cfg) / "curation_marks.applied.json"
@@ -227,7 +253,7 @@ def sync_markdown_marks(store, cfg, log=print, read_edits=True):
         new = BOX_RX.sub(lambda m: boxes(m[5], current.get(m[5], "normal"), table=m[3].startswith("\\")), text)
         if new != text:
             f.write_text(new, encoding="utf-8")
-    return len(wanted)
+    return len(wanted) + len(wanted_notes)
 
 
 def all_marks(store, where="1=1"):

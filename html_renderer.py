@@ -147,6 +147,11 @@ gap:4px;min-width:230px;max-height:75vh;overflow-y:auto;box-shadow:0 8px 24px rg
 .sibtn{padding:1px 7px;font-size:13px}.sibtn.user{border-color:var(--accent)}.sibtn sup{font-size:9px;color:var(--accent)}
 .tagpill{cursor:pointer;opacity:.75}.tagpill:hover{opacity:1}
 .topicbar{background:var(--chip)}.topicbar a.btn{text-decoration:none}.tag.tlink{cursor:pointer;color:var(--accent)}
+.tier3{background:var(--bg);padding-top:6px;padding-bottom:6px}.tlabel{align-self:center}.push{flex:1}
+.tag.notetag{background:var(--citebg);color:var(--fg);font-weight:600}
+.noteline{display:flex;flex-wrap:wrap;align-items:center;gap:6px}input.note{flex:1;min-width:220px;max-width:640px;
+padding:4px 8px;border-radius:6px;border:1px solid var(--line);background:var(--card);color:var(--fg);font:inherit;font-size:13.5px}
+input.note:focus{outline:none;border-color:var(--accent)}.nstate{color:var(--ok);font-size:12px}
 .welcome{margin:10px 12px;padding:14px 16px;border:2px solid var(--accent);border-radius:10px;background:var(--chip);font-size:15px;line-height:1.5}
 tr.banner td{background:var(--chip);font-weight:600;font-size:14.5px;border-top:2px solid var(--accent)}
 tr.subbanner td{color:var(--muted);font-size:12.5px;font-weight:600;padding:4px 8px}
@@ -166,8 +171,34 @@ for (const [doi, o] of Object.entries(store)) {
   if (base === undefined) continue;
   if (base !== o.base || base === o.mark) delete store[doi];
 }
-function persist() { try { localStorage.setItem(LS, JSON.stringify(store)); } catch (e) {} }
+// 🏷️ Tech notes (v2.15): queued like marks, {doi: {note, base, t}}; '' clears a note
+const LSN = 'paper_radar_notes_v1';
+PAGE.notes = PAGE.notes || {};
+let nstore = {};
+try { nstore = JSON.parse(localStorage.getItem(LSN) || '{}'); } catch (e) { nstore = {}; }
+for (const [doi, o] of Object.entries(nstore)) {
+  if (PAGE.marks[doi] === undefined) continue;
+  const base = PAGE.notes[doi] || '';
+  if (base !== o.base || base === o.note) delete nstore[doi];
+}
+function persist() {
+  try { localStorage.setItem(LS, JSON.stringify(store)); localStorage.setItem(LSN, JSON.stringify(nstore)); } catch (e) {}
+}
 persist();
+function cleanNote(s) { return String(s || '').split(/\s+/).filter(Boolean).join(' ').slice(0, 200); }
+function noteOf(doi) { return nstore[doi] ? nstore[doi].note : (PAGE.notes[doi] || ''); }
+function setNote(doi, note) {
+  note = cleanNote(note);
+  if (note === noteOf(doi)) { refreshBars(); return; }
+  const base = PAGE.notes[doi] || '';
+  if (note === base) delete nstore[doi]; else nstore[doi] = {note, base, t: Date.now()};
+  persist(); refreshBars(); if (window.onMarkChange) window.onMarkChange(doi);
+  if (LIVE) flush(); else autoWriteFile();
+}
+function noteState(doi) {
+  if (nstore[doi]) return LIVE ? '⏳ saving…' : '🟡 queued (offline)';
+  return noteOf(doi) ? (LIVE ? '✓ saved' : '✓') : '';
+}
 // a mark = stage (normal | selected | archived) + '+cite' when ⭐ + '+si' / '+sim' for the user's silicon call;
 // pre-v2.9 'cite' = 'selected+cite'
 function normMark(m) { return m === 'cite' ? 'selected+cite' : (m || 'normal'); }
@@ -204,6 +235,13 @@ async function probe() {
       }
       for (const [doi, m] of Object.entries(s.marks)) PAGE.marks[doi] = m;
       for (const doi of Object.keys(PAGE.marks)) if (!(doi in s.marks)) PAGE.marks[doi] = 'normal';
+      if (s.notes) {  // the same rule for queued 🏷️ notes
+        for (const [doi, o] of Object.entries(nstore)) {
+          const cur = s.notes[doi] || '';
+          if (cur === o.note || (cur !== o.base && o.t < serverT)) delete nstore[doi];
+        }
+        PAGE.notes = Object.assign({}, s.notes);
+      }
       LIVE = base; persist(); pill(); refreshBars(); if (window.onMarkChange) window.onMarkChange(null);
       if (window.onLive) window.onLive();  // the dashboard syncs its shared settings (bar layout)
       if (pending()) flush();
@@ -217,14 +255,19 @@ async function flush() {
   if (!LIVE || flushing || !pending()) return;
   flushing = true;
   const marks = {}; for (const [d, o] of Object.entries(store)) marks[d] = o.mark;
+  const notes = {}; for (const [d, o] of Object.entries(nstore)) notes[d] = o.note;
   try {
-    const r = await fetch(LIVE + '/mark', {method: 'POST', headers: hdr(), body: JSON.stringify({marks}),
+    const r = await fetch(LIVE + '/mark', {method: 'POST', headers: hdr(), body: JSON.stringify({marks, notes}),
                                           signal: AbortSignal.timeout(8000)});
     const res = await r.json();
     if (!r.ok || !res.ok) throw new Error(res.error || r.status);
     for (const [doi, m] of Object.entries(res.marks)) {
       PAGE.marks[doi] = m;
       if (store[doi] && store[doi].mark === marks[doi]) delete store[doi];  // a newer click stays queued
+    }
+    for (const [doi, n] of Object.entries(res.notes || {})) {
+      if (n) PAGE.notes[doi] = n; else delete PAGE.notes[doi];
+      if (nstore[doi] && nstore[doi].note === notes[doi]) delete nstore[doi];
     }
     persist(); pill('saved');
   } catch (e) { LIVE = null; pill(); autoWriteFile(); }
@@ -246,7 +289,8 @@ let HANDLE = null;
 idb('readonly', s => s.get('marks_handle')).then(h => { HANDLE = h || null; pill(); }).catch(() => {});
 function marksJson() {
   const marks = {}; for (const [d, o] of Object.entries(store)) marks[d] = o.mark;
-  return JSON.stringify({exported: new Date().toISOString(), source: document.title, marks}, null, 1);
+  const notes = {}; for (const [d, o] of Object.entries(nstore)) notes[d] = o.note;
+  return JSON.stringify({exported: new Date().toISOString(), source: document.title, marks, notes}, null, 1);
 }
 async function writeHandle(h) {
   if ((await h.queryPermission({mode: 'readwrite'})) !== 'granted' &&
@@ -298,7 +342,7 @@ function siCell(doi, auto, tag) {
     `title="${user ? 'Set by you after reading the PDF' : 'Automatic guess (' + esc(auto) + ')'} · Click to set Silicon-Verified / ` +
     `Simulation-Only (User confirmed) / back to auto">${b}${user ? '<sup>✓</sup>' : ''}</${tag}>`;
 }
-function pending() { return Object.keys(store).length; }
+function pending() { return Object.keys(store).length + Object.keys(nstore).length; }
 function curButtons(doi) {
   const st = stageOf(doi), c = citedOf(doi);
   return `<span class="cur" onclick="event.stopPropagation()">` +
@@ -311,6 +355,7 @@ function refreshBars() {
   const p = document.getElementById('pending'); if (p) p.textContent = pending();
   const n = document.getElementById('bibn'); if (n) n.textContent = markedDois(false).length;
   const k = document.getElementById('pooln'); if (k) k.textContent = markedDois(true).length;
+  document.querySelectorAll('[data-nstate]').forEach(el => el.textContent = noteState(el.dataset.nstate));
   refreshCur();
 }
 // ⭐ papers, or (pool) ✅ Selected or ⭐ papers — known to the page or only clicked in this browser
@@ -450,9 +495,16 @@ def paper_records(store, cfg, dives=None):
                                     f" {html.escape(str(l['venue']))} {l.get('year') or ''}:</strong> "
                                     f"<a href='https://doi.org/{l['doi']}'>{html.escape(l['title'])}</a> "
                                     f"<span class='muted'>({html.escape(l['signal'])})</span></p>" for l in lin),
-            "abstract": p.get("abstract") or "", "mark": curation.mark_of(p),
+            "abstract": p.get("abstract") or "", "mark": curation.mark_of(p), "note": p.get("user_note") or "",
             "bib": catalog.bib_entry(p, key)})
     return recs
+
+
+def weekly_reports(cfg):
+    """[{week, href}] of the weekly reports, newest first (each .md gets an .html next to it)."""
+    d = Path(cfg["paths"]["weekly_dir"])
+    return [{"week": f.stem, "href": f"{d.name}/{f.stem}.html"}
+            for f in sorted(d.glob("????-W??.md"), reverse=True)] if d.exists() else []
 
 
 # ---------- dashboard ----------
@@ -460,15 +512,27 @@ def paper_records(store, cfg, dives=None):
 DASH_JS = r"""
 const P = PAGE.papers, DIVES = PAGE.topics || [], DIVE = Object.fromEntries(DIVES.map(t => [t.slug, t]));
 const BY_DOI = Object.fromEntries(P.map(p => [p.doi, p]));
-const PILLARS_CFG = PAGE.pillars || [];  // [{key: 'p1', n: 1, name: '…'}] from config.json "pillars"
-let view = PAGE.welcome ? 'all' : 'candidate', q = '', sortKey = 'date', sortDir = -1, topicSel = 'all', userSorted = false, sub = 'all';
-let menu = '';  // which 📁 folder is open: 'more' (top bar), 'submore' (pillar sub-bar) or ''
+// three tiers: 1 = the view (top bar) · 2 = 📅 Weekly Brief's pillar / 🌍 Beyond IEEE (wsel) or 🔎 Topic Dives'
+// dive (topicSel) · 3 = the curation stage inside either (sub)
+let view = PAGE.welcome ? 'all' : 'candidate', q = '', sortKey = 'date', sortDir = -1, topicSel = 'all', wsel = 'all',
+  userSorted = false, sub = 'all';
+let menu = '';  // which 📁 folder is open: 'more' (top bar), 'submore' (tier-3 status bar) or ''
 const open = new Set(), tagOpen = new Set();
 let tagsOn = false; try { tagsOn = localStorage.getItem('paper_radar_tags') === '1'; } catch (e) {}
+// pillars come from config.json "pillars" (catalog.PILLARS): [{k: 'p1', n: 1, short: 'Pillar 1', name: '…'}]
+const PILLARS = PAGE.pillars || [];
+const GROUPS = PILLARS.map(x => [x.k, x.short, x.name]).concat([['beyond', '🌍 Beyond IEEE', '🌍 Beyond IEEE (Nature / Science): the rolling board']]);
+const GROUPED = Object.fromEntries(PILLARS.map(x => [x.k, p => p.pillar === x.n]).concat([['beyond', p => p.beyond]]));
+const GROUP_LABEL = Object.fromEntries(GROUPS.map(([k, l]) => [k, l]));
+const WEEKS = PAGE.weeks || [];  // [{week, href}] newest first
+let wkSel = WEEKS.length ? WEEKS[0].week : '';
 // primary views stay on one row; the rest live in the 📁 More Views folder
 const FILTERS = [['all','All'],['candidate','📋 Candidate'],['selected','✅ Selected'],['cite','⭐ To Cite'],
-  ...PILLARS_CFG.map(p => [p.key, 'Pillar ' + p.n]),['beyond','🌍 Beyond IEEE'],['topic','🔎 Topic Dives'],
+  ['weekly','📅 Weekly Brief'],['topic','🔎 Topic Dives'],
   ['silicon','🔬 Silicon-Verified Only'],['pinned','🏛️ Anchors & Pinned'],['lineage','📈 Journal Extensions'],['archived','🗄️ Archived']];
+const TIERED = {weekly: true, topic: true};  // views with a tier-2 and a tier-3 bar
+const VIEW_TITLE = {weekly: 'The radar\'s own papers: weekly + catch-up + pinned, by pillar, and 🌍 Beyond IEEE',
+  topic: 'Papers from your --topic deep-dives, one banner per dive'};
 // which views sit on the main bar and which in 📁 More Views, in order: the user's layout (drag & drop, or
 // ⚙️ Customize views in the folder). Shared by every device (v2.12): saved by the sync server (POST /prefs →
 // dashboard_prefs.json, also embedded in the page when it's generated) and in this browser; the newest (`t`) wins.
@@ -479,7 +543,10 @@ const DEFAULT_LAYOUT = {main: FILTERS.map(f => f[0]).filter(k => !DEFAULT_MORE.i
 let layout = loadLayout(), customizing = false;
 function normLayout(l) {
   const known = new Set(FILTERS.map(f => f[0])), seen = new Set();
-  const clean = a => (Array.isArray(a) ? a : []).filter(k => known.has(k) && !seen.has(k) && seen.add(k));
+  // v2.15: the old top-level pillar / 🌍 Beyond buttons moved under 📅 Weekly Brief, which takes the first one's place
+  let moved = false;
+  const legacy = a => (Array.isArray(a) ? a : []).flatMap(k => /^p\d+$/.test(k) || k === 'beyond' ? (moved ? [] : (moved = true, ['weekly'])) : [k]);
+  const clean = a => legacy(a).filter(k => known.has(k) && !seen.has(k) && seen.add(k));
   const out = l ? {main: clean(l.main), more: clean(l.more), t: Number(l.t) || 0} : {main: [], more: [], t: 0};
   for (const k of DEFAULT_LAYOUT.main) if (!seen.has(k)) { out.main.push(k); seen.add(k); }
   for (const k of DEFAULT_LAYOUT.more) if (!seen.has(k)) { out.more.push(k); seen.add(k); }
@@ -540,34 +607,38 @@ function dropOn(e, where, before) {
   const k = e.dataTransfer.getData('text/plain');
   if (FILTERS.some(f => f[0] === k)) moveView(k, where, before);
 }
-const PILLAR_NAMES = Object.assign(Object.fromEntries(PILLARS_CFG.map(p => [p.key, `Pillar ${p.n}: ${p.name}`])),
-  {beyond: '🌍 Beyond IEEE'});
-// inside a pillar or Beyond IEEE: one curation stage at a time ('all' = everything in it but 🗄️ Archived)
-const SUBS = [['all','All in Pillar'],['normal','📋 Candidate'],['selected','✅ Selected'],['cite','⭐ Cite'],
+// tier 3, inside 📅 Weekly Brief or 🔎 Topic Dives: one curation stage at a time ('all' = everything but 🗄️ Archived)
+const SUBS = [['all','All'],['normal','📋 Candidate'],['selected','✅ Selected'],['cite','⭐ Cite'],
   ['pinned','🏛️ Anchors & Pinned'],['archived','🗄️ Archived']];
 const SUB_MORE = ['pinned', 'archived'];
-const GROUPED = Object.assign(Object.fromEntries(PILLARS_CFG.map(c => [c.key, p => p.pillar === c.n])),
-  {beyond: p => p.beyond});
-// stage (st) and ⭐ (c) are independent: a ✅ Selected + ⭐ paper shows under both Selected and To Cite
-function inGroup(p, v, s) {
+function reviewed(p) { return stageOf(p.doi) !== 'normal' || citedOf(p.doi); }
+// tier 2: in 📅 Weekly Brief, the radar's own papers (weekly / catch-up / pinned) plus reviewed papers of a pillar
+// or Beyond IEEE (w = 'all' or a group); in 🔎 Topic Dives, the papers of every dive or of one (t)
+function inTier2(p, v, w, t) {
+  if (v === 'weekly') return (p.core || (reviewed(p) && (p.pillar > 0 || p.beyond))) && (w === 'all' || GROUPED[w](p));
+  if (v === 'topic') return t === 'all' ? p.topics.length > 0 : p.topics.some(x => x.slug === t);
+  return false;
+}
+// tier 3: stage (st) and ⭐ (c) are independent: a ✅ Selected + ⭐ paper shows under both Selected and Cite
+function stageOk(p, s) {
   const st = stageOf(p.doi), c = citedOf(p.doi);
-  if (!GROUPED[v](p) || !(p.core || st!=='normal' || c)) return false;  // reviewed topic-dive papers count too
   return s === 'all' ? st!=='archived' : s === 'pinned' ? !!p.pin && st!=='archived' : s === 'cite' ? c : st===s;
 }
 function matches(p) {
   const st = stageOf(p.doi), c = citedOf(p.doi);
   // the radar views show core papers (weekly / catch-up / pinned) and reviewed ones, never unreviewed topic-dive papers
   const radar = (p.core || st!=='normal' || c) && st!=='archived';
-  const ok = GROUPED[view] ? inGroup(p, view, sub) : {all: true, candidate: st==='normal' && p.core, selected: st==='selected',
-    cite: c, archived: st==='archived', silicon: siBadge(p.doi, p.silicon_auto)==='✅' && radar, pinned: !!p.pin && st!=='archived',
-    lineage: p.lineage && radar, topic: p.topics.length>0 && st!=='archived'}[view];
+  const ok = TIERED[view] ? inTier2(p, view, wsel, topicSel) && stageOk(p, sub) : {all: true, candidate: st==='normal' && p.core,
+    selected: st==='selected', cite: c, archived: st==='archived', silicon: siBadge(p.doi, p.silicon_auto)==='✅' && radar,
+    pinned: !!p.pin && st!=='archived', lineage: p.lineage && radar}[view];
   if (!ok) return false;
   if (!q) return true;
   return (p.title+' '+p.all_authors+' '+p.venue+' '+p.venue_name+' '+p.key+' '+p.doi+' '+p.hits.join(' ')+' '+p.date+' '+
-    p.topics.map(t => DIVE[t.slug] ? DIVE[t.slug].query : '').join(' ')).toLowerCase().includes(q);
+    noteOf(p.doi)+' '+p.topics.map(t => DIVE[t.slug] ? DIVE[t.slug].query : '').join(' ')).toLowerCase().includes(q);
 }
-function showTopic(slug) { view = 'topic'; topicSel = slug; userSorted = false; render(); }
-function setView(k) { view = k; sub = 'all'; topicSel = 'all'; userSorted = false; menu = ''; render(); }
+function showTopic(slug) { if (view !== 'topic') sub = 'all'; view = 'topic'; topicSel = slug; userSorted = false; menu = ''; render(); }
+function setView(k) { view = k; sub = 'all'; topicSel = 'all'; wsel = 'all'; userSorted = false; menu = ''; render(); }
+function setW(w) { wsel = w; menu = ''; render(); }  // the tier-3 stage stays while switching pillars
 function setSub(s) { sub = s; menu = ''; render(); }
 function toggleMenu(m) { menu = menu === m ? '' : m; render(); }
 // a 📁 folder: a button (highlighted, showing the active entry's name, when one of its entries is active) and,
@@ -579,46 +650,72 @@ function folder(id, items, active, label, onpick) {
     items.map(([k, l, n]) => `<button class="btn ${active===k?'on':''}" onclick="${onpick}('${k}')">${l} <span class="muted count">${n}</span></button>`).join('') +
     `</span>` : '') + `</span>`;
 }
+// tier 3: the curation stage, counted within the current tier-2 selection
 function statusBar() {
   const el = document.getElementById('statusbar');
-  if (!GROUPED[view]) { el.style.display = 'none'; el.innerHTML = ''; return; }
+  if (!TIERED[view] || (view === 'topic' && !DIVES.length)) { el.style.display = 'none'; el.innerHTML = ''; return; }
   el.style.display = '';
-  const n = s => P.filter(p => inGroup(p, view, s)).length;
-  const lab = (s, l) => s === 'all' && view === 'beyond' ? 'All in Beyond IEEE' : l;
-  el.innerHTML = `<span class="muted" style="align-self:center">${PILLAR_NAMES[view]}:</span>` +
+  const n = s => P.filter(p => inTier2(p, view, wsel, topicSel) && stageOk(p, s)).length;
+  const scope = view === 'weekly' ? (wsel === 'all' ? 'All Weekly' : GROUP_LABEL[wsel])
+                                  : (topicSel === 'all' ? 'All dives' : '🔎 ' + (DIVE[topicSel] || {}).short);
+  el.innerHTML = `<span class="muted tlabel">${esc(scope)} · status:</span>` +
     SUBS.filter(([s]) => !SUB_MORE.includes(s)).map(([s, l]) =>
-      `<button class="btn ${sub===s?'on':''}" onclick="setSub('${s}')">${lab(s, l)} <span class="muted count">${n(s)}</span></button>`).join('') +
+      `<button class="btn ${sub===s?'on':''}" ${s==='all'?'title="Everything except 🗄️ Archived"':''} onclick="setSub('${s}')">${l} <span class="muted count">${n(s)}</span></button>`).join('') +
     folder('submore', SUBS.filter(([s]) => SUB_MORE.includes(s)).map(([s, l]) => [s, l, n(s)]), sub, 'More', 'setSub');
+}
+// tier 2: 📅 Weekly Brief → All Weekly · Pillar 1–N · 🌍 Beyond IEEE + 📄 Open Weekly Report; 🔎 Topic Dives → dives
+function tier2() {
+  const el = document.getElementById('tier2');
+  if (view === 'weekly') {
+    el.style.display = '';
+    const n = w => P.filter(p => inTier2(p, 'weekly', w, 'all') && stageOk(p, sub)).length;
+    const b = (w, label, title) => `<button class="btn ${wsel===w?'on':''}" title="${escA(title)}" onclick="setW('${w}')">` +
+      `${label} <span class="muted count">${n(w)}</span></button>`;
+    el.innerHTML = `<span class="muted tlabel">📅 Weekly Brief:</span>` + b('all', 'All Weekly', 'Every pillar and 🌍 Beyond IEEE') +
+      GROUPS.map(([k, l, t]) => b(k, l, t)).join('') + weekLink();
+    return;
+  }
+  if (view === 'topic' && DIVES.length) {
+    el.style.display = '';
+    const pill = (slug, label, title) => `<button class="btn ${topicSel===slug?'on':''}" title="${escA(title)}" onclick="showTopic('${slug}')">${label}</button>`;
+    el.innerHTML = `<span class="muted tlabel">🔎 Topic Dives:</span>` +
+      pill('all', `All dives <span class="muted count">${DIVES.length}</span>`, 'every topic dive') + DIVES.map(t =>
+      pill(t.slug, `🔎 ${esc(t.short)} <span class="muted">· ${t.date} · ${t.papers.length} papers</span>`, t.query) +
+      (t.href ? `<a class="btn" href="${t.href}" target="_blank" title="${escA(t.query)}">📄 Open Topic Report</a>` : '')).join('');
+    return;
+  }
+  el.style.display = 'none'; el.innerHTML = '';
+}
+function weekLink() {  // 📄 Open Weekly Report, the latest week by default; a selector when there are several
+  if (!WEEKS.length) return '';
+  const cur = WEEKS.find(w => w.week === wkSel) || WEEKS[0];
+  const pick = WEEKS.length < 2 ? '' : `<select class="btn" title="Which week's report" onchange="wkSel=this.value;render()">` +
+    WEEKS.map(w => `<option ${w.week===cur.week?'selected':''}>${w.week}</option>`).join('') + `</select>`;
+  return `<span class="push"></span>${pick}<a class="btn" href="${cur.href}" target="_blank" title="The ${cur.week} weekly report">` +
+    `📄 Open Weekly Report${WEEKS.length < 2 ? ' (' + cur.week + ')' : ''}</a>`;
 }
 function toggleTags() {
   tagsOn = !tagsOn; tagOpen.clear();
   try { localStorage.setItem('paper_radar_tags', tagsOn ? '1' : '0'); } catch (e) {}
   render();
 }
-function topicBar() {
-  const el = document.getElementById('topicbar');
-  if (view !== 'topic' || !DIVES.length) { el.style.display = 'none'; el.innerHTML = ''; return; }
-  el.style.display = '';
-  const pill = (slug, label, title) => `<button class="btn ${topicSel===slug?'on':''}" title="${escA(title)}" onclick="showTopic('${slug}')">${label}</button>`;
-  el.innerHTML = pill('all', `All dives <span class="muted count">${DIVES.length}</span>`, 'every topic dive') + DIVES.map(t =>
-    pill(t.slug, `🔎 ${esc(t.short)} <span class="muted">· ${t.date} · ${t.papers.length} papers</span>`, t.query) +
-    (t.href ? `<a class="btn" href="${t.href}" target="_blank" title="${escA(t.query)}">📄 Open Topic Report</a>` : '')).join('');
-}
 function cmp(a, b) {
   const k = sortKey; let x = a[k], y = b[k];
   if (k === 'score') return (x - y) * sortDir;
   return String(x).localeCompare(String(y)) * sortDir;
 }
-function counts() {
-  const c = {}; for (const [k] of FILTERS) { const v = view, s0 = sub; view = k; sub = 'all';
-    c[k] = P.filter(p => { const s = q; q = ''; const r = matches(p); q = s; return r; }).length; view = v; sub = s0; }
+function counts() {  // top bar: each view as a whole (tier 2 = all, tier 3 = All), regardless of the search
+  const saved = [view, sub, wsel, topicSel, q];
+  sub = 'all'; wsel = 'all'; topicSel = 'all'; q = '';
+  const c = {}; for (const [k] of FILTERS) { view = k; c[k] = P.filter(matches).length; }
+  [view, sub, wsel, topicSel, q] = saved;
   return c;
 }
 const LABEL = Object.fromEntries(FILTERS);
 function viewBtn(k, c, where) {  // a draggable view button on the bar or in the folder
   return `<button class="btn ${view===k?'on':''}" draggable="true" ondragstart="dragStart(event,'${k}')" ` +
     `ondragover="dragOver(event)" ondrop="dropOn(event,'${where}','${k}')" ` +
-    `${PILLAR_NAMES[k] ? `title="${escA(PILLAR_NAMES[k])}"` : ''} onclick="setView('${k}')">${LABEL[k]} <span class="muted count">${c[k]}</span></button>`;
+    `${VIEW_TITLE[k] ? `title="${escA(VIEW_TITLE[k])}"` : ''} onclick="setView('${k}')">${LABEL[k]} <span class="muted count">${c[k]}</span></button>`;
 }
 function customizeRows(c) {  // ⚙️ Customize views: every view, with ↑ ↓ and bar ↔ folder (taps work on iPhone)
   const row = (k, where) => `<span class="crow"><span>${LABEL[k]} <span class="muted count">${c[k]}</span></span><span>` +
@@ -645,11 +742,16 @@ function mainBar(c) {
     `</span>`;
   el.innerHTML = layout.main.map(k => viewBtn(k, c, 'main')).join('') + `<span class="more">${fbtn}${menuHtml}</span>`;
 }
+let renderLater = false;
 function render() {
+  // never rebuild the table under a 🏷️ note being typed (live sync / re-probe would wipe it); its blur renders
+  const ae = document.activeElement;
+  if (ae && ae.classList && ae.classList.contains('note')) { renderLater = true; return; }
+  renderLater = false;
   const c = counts();
   mainBar(c);
   const tb = document.getElementById('tagsbtn'); if (tb) tb.classList.toggle('on', tagsOn);
-  statusBar(); topicBar();
+  tier2(); statusBar();
   let html = '', n = 0;
   if (view === 'topic') {
     // one banner per dive, 🏛️ classics then 🚀 recent, in the dive's relevance order unless a column was clicked
@@ -690,13 +792,18 @@ function rowHtml(p) {
     const tags = !tagList.length ? '' : (tagsOn || tagOpen.has(p.doi)) ? tagList.map(t => t[1]).join('') :
       `<span class="tag tagpill" title="${escA(tagList.map(t => t[0]).join(' · '))}" ` +
       `onclick="event.stopPropagation();tagOpen.add('${p.doi}');render()">+${tagList.length} tag${tagList.length > 1 ? 's' : ''}</span>`;
+    const note = noteOf(p.doi);  // the user's 🏷️ Tech note: always visible, even with the tags collapsed
     const main = `<tr class="paper ${citedOf(p.doi)?'cite':''}" id="r-${CSS.escape(p.doi)}" onclick="tg('${p.doi}')">` +
       `<td title="${esc(p.raw_date)}">${p.date}</td><td>${p.venue}</td><td><a href="https://doi.org/${p.doi}" target="_blank" onclick="event.stopPropagation()">${esc(p.title)}</a>` +
+      (note ? `<div><span class="tag notetag" title="Your 🏷️ Tech note">🏷️ ${esc(note)}</span></div>` : '') +
       `<div class="muted">${esc(p.authors)} ${tags}</div></td><td class="count">${p.score}</td>` +
       `<td>${siCell(p.doi, p.silicon_auto, 'button')}</td><td class="hide-sm">${p.pillar||'–'}</td>` +
       `<td class="hide-sm muted">${esc(p.key)}</td><td data-cur="${p.doi}">${curButtons(p.doi)}</td></tr>`;
     const det = isOpen ? `<tr class="detail"><td colspan="8"><p class="muted">🔬 Silicon: ${siCell(p.doi, p.silicon_auto, 'button')} ` +
-      `click to cycle ✅ Silicon-Verified → ⚠️ Simulation-Only → automatic (${esc(p.silicon_auto)})</p>${p.lineage_html}${p.digest_html}` +
+      `click to cycle ✅ Silicon-Verified → ⚠️ Simulation-Only → automatic (${esc(p.silicon_auto)})</p>` +
+      `<p class="muted noteline">🏷️ Tech note: <input class="note" data-doi="${p.doi}" value="${escA(note)}" maxlength="200" ` +
+      `placeholder="Key technique / takeaway (e.g. gate-leakage PTAT, floating inverter amp)…" onkeydown="noteKey(event, this)" ` +
+      `onblur="saveNote(this)"> <span class="nstate" data-nstate="${p.doi}">${noteState(p.doi)}</span></p>${p.lineage_html}${p.digest_html}` +
       `<details><summary class="muted">Abstract · hits · BibTeX</summary><p>${esc(p.abstract)||'<span class=muted>No abstract.</span>'}</p>` +
       `<p class="muted">${p.hits.map(h=>'<span class=tag>'+esc(h)+'</span>').join('')}</p><pre>${esc(p.bib)}</pre></details></td></tr>` : '';
     return main + det;
@@ -704,6 +811,17 @@ function rowHtml(p) {
 function esc(s) { return String(s||'').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
 function escA(s) { return esc(s).replace(/"/g, '&quot;'); }
 function tg(doi) { open.has(doi) ? open.delete(doi) : open.add(doi); render(); }
+// 🏷️ Tech note: saved on Enter or when the field loses focus; Esc restores the saved text
+function noteKey(e, el) {
+  if (e.key === 'Enter') { e.preventDefault(); el.blur(); }
+  else if (e.key === 'Escape') { el.value = noteOf(el.dataset.doi); el.blur(); }
+}
+function saveNote(el) {
+  const doi = el.dataset.doi;
+  setTimeout(() => {  // after the blur, so render() isn't held back by the focused field
+    if (cleanNote(el.value) !== noteOf(doi)) setNote(doi, el.value); else if (renderLater) render();
+  }, 0);
+}
 function sortBy(k) { sortDir = sortKey === k ? -sortDir : (k==='title'||k==='venue' ? 1 : -1); sortKey = k; userSorted = true; render(); }
 window.onMarkChange = (doi) => {
   if (!doi) return render();  // live sync refreshed all marks
@@ -722,8 +840,10 @@ def write_dashboard(store, cfg, path):
     data = {"generated": datetime.now().strftime("%Y-%m-%d %H:%M"), "papers": recs, "topics": dives,
             "prefs": curation.load_prefs(cfg),  # the shared bar layout, for pages opened offline
             "marks": {r["doi"]: r["mark"] for r in recs}, "bib": {r["doi"]: r["bib"] for r in recs},
-            "sync": curation.page_sync_config(cfg),
-            "pillars": [{"key": f"p{i}", "n": i, "name": n} for i, n in enumerate(cfg.get("pillars") or [], 1)],
+            "notes": {r["doi"]: r["note"] for r in recs if r["note"]},
+            "pillars": [{"k": f"p{i}", "n": i, "short": f"Pillar {i}", "name": f"Pillar {i}: {n}"}  # tier 2 of 📅 Weekly Brief
+                        for i, n in enumerate(cfg.get("pillars") or [], 1)],
+            "weeks": weekly_reports(cfg), "sync": curation.page_sync_config(cfg),
             "welcome": not fetcher.pillars_ready(cfg)}
     n_store = store.db.execute("SELECT COUNT(*) FROM papers").fetchone()[0]
     welcome = (f"""<div class="welcome">👋 <b>Welcome to IC Paper Radar!</b> No research pillars are configured yet.
@@ -732,10 +852,11 @@ Open <code>README.md</code> to configure your research domains with AI"""
                + "</div>" if data["welcome"] else "")
     if not n_store:  # the same tip briefing.py prints
         welcome += f'<div class="welcome">💡 {html.escape(fetcher.STORE_TIP)}</div>'
+    # tier 1 = views · tier 2 = 📅 Weekly Brief's pillars / 🔎 Topic Dives' dives · tier 3 = curation stage
     body = welcome + f"""<div class="filters" id="filters"></div>
-<div class="filters topicbar" id="statusbar" style="display:none"></div>
-<div class="filters topicbar" id="topicbar" style="display:none"></div>
-<div class="filters"><input id="q" class="search" placeholder="Search title, author, venue, numbers (e.g. 'SAR', 'PLL', 'nW', 'ISSCC')…">
+<div class="filters topicbar" id="tier2" style="display:none"></div>
+<div class="filters tier3" id="statusbar" style="display:none"></div>
+<div class="filters"><input id="q" class="search" placeholder="Search title, author, venue, numbers, 🏷️ notes (e.g. 'SAR', 'PLL', 'nW', 'ISSCC')…">
 <span class="muted" style="align-self:center"><span id="nrows" class="count">0</span> papers · generated {data['generated']} ·
 <a href="INDEX.md">INDEX.md</a></span></div>
 <main><div class="tablewrap"><table><thead><tr><th class="sort" onclick="sortBy('date')">Date</th>
