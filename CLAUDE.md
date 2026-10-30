@@ -17,6 +17,10 @@ Instructions for an AI agent (Claude Code) opened in this folder:
   💾 Save Marks and runs `python briefing.py --sync` (README.md, "Curation"). To set a note yourself, put it
   in `curation_marks.json` under `"notes": {"<doi>": "<text>"}` and run `--sync`; don't write to the
   database directly.
+- To give the database to someone, run `python briefing.py --export-share` (README.md, "Sharing your
+  corpus"); never send `paper_store.sqlite` itself, which holds the user's marks and notes. Use
+  `--include-curation` only when the user says the other person should see them. To bring in someone
+  else's store, use `--merge-store OTHER.sqlite` (never copy it over `paper_store.sqlite`).
 - Don't edit the `*.py` files unless the user asks. Never put API keys in `config.json`; the IEEE key
   goes in the `IEEE_API_KEY` environment variable.
 - Reports and digests are written in English.

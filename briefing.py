@@ -8,6 +8,8 @@
   python briefing.py --lineage            conference ↔ journal lineage over every catalog paper, now
   python briefing.py --sync               apply marks, refill the Beyond board (digests only its new papers)
   python briefing.py --select / --unselect / --cite / --uncite / --archive / --unarchive <DOI or text>
+  python briefing.py --export-share [DST] [--include-curation]   clean share copy of the store (also every Friday)
+  python briefing.py --merge-store OTHER.sqlite [--peer NAME] / --adopt-external   bring in someone else's store
 
 Every day (scheduled 07:00): collect (0 tokens) → digest only the *new* candidates (cached per DOI,
 never re-done) → rewrite this week's file Weekly_Briefings/<YYYY-Www>.md ("in progress").
@@ -45,6 +47,7 @@ import html_renderer
 import pins
 import relations
 import topic
+import store as store_mod
 import vpn_checker
 from store import Store
 
@@ -397,6 +400,31 @@ def update_index(weekly_dir, topic_dir=None):
     (weekly_dir.parent / "INDEX.md").write_text("\n".join(rows) + "\n", encoding="utf-8")
 
 
+def export_share(store_path, cfg, dst=None, include_curation=False, log=print):
+    """The clean share database (store.export_clean_share_db) at dst, else the optional paths.share_db (~ allowed),
+    else output/paper_store_clean_share.sqlite. A failure is logged and never fails the run; the previous share
+    database stays."""
+    dst = Path(dst or cfg["paths"].get("share_db") or Path(cfg["paths"]["onedrive_root"]) / "paper_store_clean_share.sqlite").expanduser()
+    try:
+        s = store_mod.export_clean_share_db(store_path, dst, include_curation, secrets=(curation.sync_token(),))
+        log(f"Share database: {dst} ({s['papers']} papers, {s['abstracts']} abstracts, {s['digests']} digests, "
+            f"{s['bytes'] / 1e6:.1f} MB{', with curation' if include_curation else ''})")
+    except Exception as e:
+        log(f"Share database not written (previous one kept): {e}")
+
+
+def adopt_external(store, cfg):
+    """--adopt-external: merged ('external') IEEE papers that score ≥ min_score here become this radar's archive
+    papers, so the pillar replenish can pull them. Returns how many."""
+    n = 0
+    for p in store.where("status='external' AND grp='ieee'"):
+        s, hits = fetcher.score(p, cfg)
+        if s >= cfg["min_score"]:
+            store.update(p["doi"], {"status": "archive", "score": s, "hits": hits})
+            n += 1
+    return n
+
+
 def backup_store(store, cfg, log=print):
     """Disaster recovery: lock-safe online copy of the store (sqlite3 backup API) to
     IC_Paper_Radar\\_system\\paper_store_backup.sqlite. Written to a .tmp file, checked, then swapped in, so
@@ -442,6 +470,17 @@ def main():
     ap.add_argument("--add", metavar="DOI_OR_TITLE", help="pin a paper into the active catalog (fetched if missing), "
                                                           "bypassing min_score and date windows; with --pillar / --cite")
     ap.add_argument("--pillar", type=int, metavar="N", help="pillar number for --add (from config.json \"pillars\")")
+    ap.add_argument("--export-share", nargs="?", const="", metavar="DST",
+                    help="write the clean share database now (default output/paper_store_clean_share.sqlite or "
+                         "paths.share_db; also every Friday finalize)")
+    ap.add_argument("--include-curation", action="store_true",
+                    help="with --export-share: keep marks, notes, pillars and scores (for a collaborator)")
+    ap.add_argument("--merge-store", metavar="OTHER.sqlite",
+                    help="merge another store: fill missing objective data, add new DOIs as 'external' (never "
+                         "pulled into the pillars); this store's curation is never touched")
+    ap.add_argument("--peer", metavar="NAME", help="with --merge-store: keep the other store's marks/notes in peer_curation")
+    ap.add_argument("--adopt-external", action="store_true",
+                    help="score the 'external' (merged) IEEE papers and move those ≥ min_score into this radar's archive")
     ap.add_argument("--seed-pillars", type=int, nargs="?", const=-1, metavar="N",
                     help="pull the best N archive papers per pillar (since catch_up.since) into this week now "
                          "(default catch_up.per_pillar), pin the anchors, and fill the Beyond-IEEE board")
@@ -482,6 +521,16 @@ def main():
         print("\n" + fetcher.STORE_TIP + "\n")
     store = Store(store_path)
     topic_dir = Path(cfg["paths"]["topic_dir"])
+
+    # sharing (v2.16): stand-alone actions, no collection / report
+    if a.merge_store or a.adopt_external or a.export_share is not None:
+        if a.merge_store:
+            store_mod.merge_store(store, a.merge_store, a.peer)
+        if a.adopt_external:
+            print(f"Adopted {adopt_external(store, cfg)} external papers into the archive (≥ min_score)")
+        if a.export_share is not None:
+            export_share(store_path, cfg, a.export_share or None, a.include_curation)
+        return 0
 
     def refresh_catalog():
         catalog.write_all(store, cfg)
@@ -622,6 +671,8 @@ def main():
     if not a.dry_run:
         queue_path.write_text(json.dumps(queue, indent=1, ensure_ascii=False), encoding="utf-8")
         backup_store(store, cfg, print)
+        if final:  # the share database grows with the corpus, once a week
+            export_share(store_path, cfg)
     print(store.counts())
     return 0
 

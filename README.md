@@ -333,6 +333,46 @@ a 🏷️ badge under the title, and the search box finds it. 💾 Save Marks wr
  "notes": {"10.1109/jssc.2026.1234567": "split CDAC + kT/C cancellation"}}
 ```
 
+### Sharing your corpus / 共享论文库
+
+```bash
+python briefing.py --export-share                      # output/paper_store_clean_share.sqlite
+python briefing.py --export-share D:/share/radar.sqlite   # or any path (also: "share_db" under "paths")
+```
+
+- **What a classmate gets:** every paper with its abstract, references and AI digest, but none of your
+  own state: all rows become unmarked `archive` papers (no ✅/⭐/🗄️, 🏷️ notes, pillars, scores or weekly
+  state), the digests lose their "Pillar:" line, and the run log tables are emptied. They put it in their
+  folder as `paper_store.sqlite` and run Step 3 with their own pillars.
+  分享的副本包含全部论文、摘要、参考文献和 AI 摘要，但清除你的标记、笔记、pillar、分数和运行记录。
+- **Automatic:** every Friday, when the weekly report is finalized, the share copy is rewritten, so it
+  grows with your corpus. 每周五定稿时自动更新。
+- **Safety check:** before it replaces the old copy, the file is checked for leftover marks or
+  "Pillar:" lines and for local user paths (`C:\Users\…`, `/home/…`, `/Users/…`) or your sync token in
+  any text. If anything is found, nothing is written and the previous copy stays.
+- `--include-curation` keeps your marks, notes, pillars and scores (for a co-maintainer who should see
+  them). The text check still runs.
+
+### Co-maintaining a corpus (reserved) / 共同维护（预留接口）
+
+```bash
+python briefing.py --merge-store classmate.sqlite --peer alice   # bring in someone else's store
+python briefing.py --adopt-external                              # later: take the ones that fit your pillars
+```
+
+- **One row per DOI, no duplicates.** For a paper you already have, only empty objective fields (abstract,
+  authors, references, a missing digest, higher citation counts) are filled in. Your marks, notes,
+  pillars, scores and weekly state are never touched.
+- **New papers arrive as status `external`:** searchable with `--topic` / `--recall` and used for
+  conference ↔ journal links, but never pulled into your pillars, the Beyond-IEEE board or the reports.
+  If your own daily run later finds the same DOI, it becomes a normal paper of yours.
+- `--adopt-external` scores the external IEEE papers against your pillars and moves those ≥ `min_score`
+  into your archive, where the catch-up can pick them.
+- With `--peer NAME`, the other store's marks, ⭐, notes and pillars are kept in a separate
+  `peer_curation` table. It's dormant for now: nothing shows it yet.
+- The other file is opened read-only. 合并他人的库：同一 DOI 只保留一条，只补空字段，从不改动你的标记；
+  新论文标为 `external`，不会进入你的 pillar，需要时用 `--adopt-external` 收入。
+
 ### Optional: free IEEE API key / 可选：免费 IEEE API key
 
 Without a key the radar prints one `[INFO]` line and uses OpenAlex + Crossref. With a key, new papers get
@@ -373,6 +413,9 @@ switches to `--no-claude` by itself and everything else still works. Add `--no-c
 | `python briefing.py --add "<DOI or title>" [--pillar N] [--cite]` | Pin a paper you care about |
 | `python briefing.py --cite / --select / --archive "<DOI or title words>"` | Mark papers from the terminal |
 | `python briefing.py --sync` | Apply 💾 Save Marks exports, refill each pillar to 10, rewrite the dashboard |
+| `python briefing.py --export-share [DST] [--include-curation]` | Write the clean share copy of your store now (also every Friday) |
+| `python briefing.py --merge-store OTHER.sqlite [--peer NAME]` | Merge someone else's store: fill gaps, new papers as `external` |
+| `python briefing.py --adopt-external` | Move external papers that fit your pillars into your archive |
 | `python briefing.py --lineage` | Conference ↔ journal links for every catalog paper |
 | `python briefing.py --finalize` | Finalize this week's report now |
 | `--no-claude` | Add to any command: no AI calls |
