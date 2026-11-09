@@ -10,6 +10,7 @@
   python briefing.py --select / --unselect / --cite / --uncite / --archive / --unarchive <DOI or text>
   python briefing.py --export-share [DST] [--include-curation]   clean share copy of the store (also every Friday)
   python briefing.py --merge-store OTHER.sqlite [--peer NAME] / --adopt-external   bring in someone else's store
+  python briefing.py --sync-data-repo     shared corpus repo: fetch + reset, merge, export, push (also on Fridays)
 
 Every day (scheduled 07:00): collect (0 tokens) → digest only the *new* candidates (cached per DOI,
 never re-done) → rewrite this week's file Weekly_Briefings/<YYYY-Www>.md ("in progress").
@@ -42,6 +43,7 @@ ensure_minisforum_env()
 
 import catalog
 import curation
+import data_repo
 import fetcher
 import html_renderer
 import pins
@@ -425,6 +427,18 @@ def adopt_external(store, cfg):
     return n
 
 
+def sync_data_repo(store, store_path, cfg, push=True, log=print):
+    """--sync-data-repo, and after every Friday finalize when the clone exists (data_repo.py): fetch + reset
+    the shared corpus repo, merge its file into this store (+ adopt), export the clean union back, commit and
+    push if it changed. A failure is logged and never fails the run. Returns 0 / 1."""
+    try:
+        data_repo.sync(store, store_path, cfg, adopt=adopt_external, secrets=(curation.sync_token(),), push=push, log=log)
+        return 0
+    except Exception as e:
+        log(f"Shared corpus not synced: {e}")
+        return 1
+
+
 def backup_store(store, cfg, log=print):
     """Disaster recovery: lock-safe online copy of the store (sqlite3 backup API) to
     IC_Paper_Radar\\_system\\paper_store_backup.sqlite. Written to a .tmp file, checked, then swapped in, so
@@ -481,6 +495,10 @@ def main():
     ap.add_argument("--peer", metavar="NAME", help="with --merge-store: keep the other store's marks/notes in peer_curation")
     ap.add_argument("--adopt-external", action="store_true",
                     help="score the 'external' (merged) IEEE papers and move those ≥ min_score into this radar's archive")
+    ap.add_argument("--sync-data-repo", action="store_true",
+                    help="one-command sync with the shared corpus repo (paths.data_repo_dir, default ../ic-paper-radar-data): "
+                         "fetch + reset, merge into this store, export the clean union back, commit + push if changed "
+                         "(also on Fridays)")
     ap.add_argument("--seed-pillars", type=int, nargs="?", const=-1, metavar="N",
                     help="pull the best N archive papers per pillar (since catch_up.since) into this week now "
                          "(default catch_up.per_pillar), pin the anchors, and fill the Beyond-IEEE board")
@@ -523,13 +541,15 @@ def main():
     topic_dir = Path(cfg["paths"]["topic_dir"])
 
     # sharing (v2.16): stand-alone actions, no collection / report
-    if a.merge_store or a.adopt_external or a.export_share is not None:
+    if a.merge_store or a.adopt_external or a.export_share is not None or a.sync_data_repo:
         if a.merge_store:
             store_mod.merge_store(store, a.merge_store, a.peer)
         if a.adopt_external:
             print(f"Adopted {adopt_external(store, cfg)} external papers into the archive (≥ min_score)")
         if a.export_share is not None:
             export_share(store_path, cfg, a.export_share or None, a.include_curation)
+        if a.sync_data_repo:  # with --dry-run: on the dry-run copy, committed locally but never pushed
+            return sync_data_repo(store, store_path, cfg, push=not a.dry_run)
         return 0
 
     def refresh_catalog():
@@ -673,6 +693,9 @@ def main():
         backup_store(store, cfg, print)
         if final:  # the share database grows with the corpus, once a week
             export_share(store_path, cfg)
+            # then the shared corpus repo, if this computer has a clone of it (silently skipped otherwise)
+            if (cfg.get("data_repo") or {}).get("friday_sync", True) and not data_repo.check_clone(data_repo.repo_dir(cfg)):
+                sync_data_repo(store, store_path, cfg)
     print(store.counts())
     return 0
 

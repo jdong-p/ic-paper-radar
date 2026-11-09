@@ -150,9 +150,13 @@
                "not_a_paper": "(?i)^(tutorials?|forums?|plenary|keynote|panel|short course|evening session|special session)\\b|\\b(this (tutorial|talk|forum|short course|session)|I will (present|discuss|talk|cover|review))\\b",
                "_note": "Pre-loaded (archive) papers published since `since` join the weekly report in a Catch-up section: each pillar gets its best `per_pillar` per week, and is topped back up to `min_candidates_per_pillar` unreviewed 📋 Candidates whenever curation drops it below (daily run, --sync, mark flags, --rescore, --lineage, --add, --seed-pillars). `not_a_paper` (regex on title + abstract) skips ISSCC/VLSI tutorials, forums and plenaries, which IEEE indexes like papers. `briefing.py --seed-pillars N` pulls at least N per pillar this week now."},
 
+  "data_repo": {"adopt_external": true, "friday_sync": true,
+                "_note": "Optional shared corpus repo for collaborators (data_repo.py): python briefing.py --sync-data-repo, and after every Friday finalize when a clone exists. adopt_external: merged papers scoring >= min_score join your archive."},
+
   "paths": {
-    "_note": "portable_mode: every output goes to ./output (paths.py). marks_extra_dirs: where the dashboard's '💾 Save Marks' downloads land.",
+    "_note": "portable_mode: every output goes to ./output (paths.py). marks_extra_dirs: where the dashboard's '💾 Save Marks' downloads land. data_repo_dir: your clone of the shared corpus repo; empty = the sibling folder ../ic-paper-radar-data (~ allowed).",
     "marks_extra_dirs": ["~/Downloads"],
+    "data_repo_dir": "",
     "store_file": "paper_store.sqlite",
     "pdf_queue_file": "pending_pdf_queue.json"
   },

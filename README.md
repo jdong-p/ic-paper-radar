@@ -369,7 +369,31 @@ python briefing.py --export-share D:/share/radar.sqlite   # or any path (also: "
 - `--include-curation` keeps your marks, notes, pillars and scores (for a co-maintainer who should see
   them). The text check still runs.
 
-### Co-maintaining a corpus (reserved) / 共同维护（预留接口）
+### Co-maintaining a corpus with a shared repo / 通过共享仓库共同维护
+
+If you and a colleague keep one paper corpus in a shared (private) Git repo whose single file is
+`paper_store_clean_share.sqlite`, clone it **next to** this folder (`../ic-paper-radar-data`, or set
+`"data_repo_dir"` under `"paths"`), then one command keeps both of you in sync:
+如果你和同事用一个共享（私有）Git 仓库维护同一个论文库，把它克隆到本目录旁边，然后只需一条命令：
+
+```bash
+python briefing.py --sync-data-repo
+```
+
+1. `git fetch` + `git reset --hard origin/main` in the clone: the shared file is taken exactly as it is,
+   so Git never has to merge a binary file.
+2. It is merged into your store (below): new papers arrive as `external`, your marks are never touched,
+   and those that fit your pillars are adopted (`"data_repo": {"adopt_external": true}`).
+3. Your store is exported, cleaned, back over the shared file: every paper, the merged ones included.
+4. It commits and pushes **only if** the remote gains something (new papers, missing abstracts or
+   references, higher citation counts), so two radars never trade empty commits. If someone pushed in the
+   meantime, it starts once more from step 1.
+
+It also runs after every Friday finalize when the clone exists (`"friday_sync": false` turns that off).
+After both of you have run it, both stores hold the same union of papers.
+运行后双方的论文库包含相同的论文并集；每周五定稿后也会自动同步。
+
+#### The building blocks / 底层命令
 
 ```bash
 python briefing.py --merge-store classmate.sqlite --peer alice   # bring in someone else's store
@@ -432,6 +456,7 @@ switches to `--no-claude` by itself and everything else still works. Add `--no-c
 | `python briefing.py --export-share [DST] [--include-curation]` | Write the clean share copy of your store now (also every Friday) |
 | `python briefing.py --merge-store OTHER.sqlite [--peer NAME]` | Merge someone else's store: fill gaps, new papers as `external` |
 | `python briefing.py --adopt-external` | Move external papers that fit your pillars into your archive |
+| `python briefing.py --sync-data-repo` | Sync with a shared corpus repo: fetch, merge, export, push if the remote gains (also on Fridays) |
 | `python briefing.py --lineage` | Conference ↔ journal links for every catalog paper |
 | `python briefing.py --finalize` | Finalize this week's report now |
 | `--no-claude` | Add to any command: no AI calls |
