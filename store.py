@@ -65,6 +65,10 @@ class Store:
         for col, decl in MIGRATIONS.items():
             if col not in have:
                 self.db.execute(f"ALTER TABLE papers ADD COLUMN {col} {decl}")
+        have = {r[1] for r in self.db.execute("PRAGMA table_info(peer_curation)")}
+        for col in ("status", "user_silicon"):  # v2.19: a peer's radar state and Si call, for its dashboard page
+            if col not in have:
+                self.db.execute(f"ALTER TABLE peer_curation ADD COLUMN {col} TEXT")
         # v2.9: ⭐ is its own flag; a pre-v2.9 'cite' mark becomes Selected + Cited (idempotent)
         self.db.execute("UPDATE papers SET user_mark='selected', cited=1 WHERE user_mark='cite'")
         self.db.commit()
@@ -256,11 +260,12 @@ def merge_store(store, other_db_path, peer=None, log=print):
                     store.update(doi, fill)
                 stats["enriched" if fill else "unchanged"] += 1
             if peer:
-                cur = {k: o.get(k) if k in have else None for k in ("user_mark", "cited", "user_note", "pillar", "score")}
+                cur = {k: o.get(k) if k in have else None
+                       for k in ("user_mark", "cited", "user_note", "pillar", "score", "status", "user_silicon")}
                 if (cur["user_mark"] or "normal") != "normal" or cur["cited"] or cur["user_note"] or cur["pillar"]:
-                    store.db.execute("INSERT OR REPLACE INTO peer_curation VALUES (?,?,?,?,?,?,?)",
-                                     (peer, doi, None if cur["pillar"] is None else str(cur["pillar"]), cur["score"],
-                                      cur["user_mark"] or "normal", int(bool(cur["cited"])), cur["user_note"]))
+                    store.db.execute(PEER_INSERT, (peer, doi, None if cur["pillar"] is None else str(cur["pillar"]),
+                                                   cur["score"], cur["user_mark"] or "normal", int(bool(cur["cited"])),
+                                                   cur["user_note"], cur["status"], cur["user_silicon"]))
                     stats["peer_rows"] += 1
         store.db.commit()
     finally:
@@ -268,3 +273,64 @@ def merge_store(store, other_db_path, peer=None, log=print):
     log(f"Merge {Path(other_db_path).name}: {stats['new']} new (status 'external'), {stats['enriched']} enriched, "
         f"{stats['unchanged']} unchanged" + (f", {stats['peer_rows']} curation rows kept for peer '{peer}'" if peer else ""))
     return stats
+
+
+# ---------- peer overlays (v2.19): each collaborator's own radar, next to the shared corpus ----------
+
+PEER_INSERT = ("INSERT OR REPLACE INTO peer_curation (peer_id, doi, pillar, score, user_mark, cited, user_note, status, "
+               "user_silicon) VALUES (?,?,?,?,?,?,?,?,?)")
+PEER_ID_RX = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,38}$")  # also a file name: peers/<id>.json, Peers/DASHBOARD_<id>.html
+OVERLAY_SQL = ("COALESCE(user_mark,'normal') != 'normal' OR cited = 1 OR COALESCE(user_note,'') != '' "
+               "OR pillar IS NOT NULL OR score > 0")
+
+
+def peer_overlay(store, peer_id, pillars, pillar_of, share_notes=True):
+    """This radar's curation as a JSON-ready overlay for collaborators (peers/<peer_id>.json in the shared
+    repo): its pillar names, and per DOI with any curation (a mark, ⭐, a note, a chosen pillar or a score > 0)
+    the pillar (`pillar_of(row)`, the same rule the dashboard uses), score, stage, ⭐, Si call, note and status.
+    Defaults are left out to keep the file small. share_notes=False keeps the 🏷️ notes private."""
+    rows = {}
+    for p in store.where(OVERLAY_SQL):
+        r = {"status": p.get("status")}
+        k = 0 if p.get("grp") == "beyond" else pillar_of(p)
+        if k:
+            r["pillar"] = k
+        if p.get("score"):
+            r["score"] = p["score"]
+        if (p.get("user_mark") or "normal") != "normal":
+            r["user_mark"] = p["user_mark"]
+        if p.get("cited"):
+            r["cited"] = 1
+        if p.get("user_silicon"):
+            r["user_silicon"] = p["user_silicon"]
+        if share_notes and p.get("user_note"):
+            r["user_note"] = p["user_note"]
+        if p.get("grp") == "beyond":
+            r["beyond"] = 1
+        rows[p["doi"]] = r
+    return {"format": 1, "peer_id": peer_id, "pillars": list(pillars), "custom_tags": [], "rows": rows}
+
+
+def import_peer_overlay(store, overlay, peer_id):
+    """Replace peer_id's rows in peer_curation with the overlay's, and keep its pillar names (and custom tags)
+    in meta['peer_pillars:<peer_id>']. Never touches this radar's own papers. Returns the number of rows."""
+    if not PEER_ID_RX.match(peer_id or ""):
+        raise ValueError(f"bad peer id {peer_id!r}")
+    rows = overlay.get("rows") or {}
+    store.db.execute("DELETE FROM peer_curation WHERE peer_id=?", (peer_id,))
+    store.db.executemany(PEER_INSERT, [
+        (peer_id, str(doi).lower().strip(), str(r["pillar"]) if r.get("pillar") else None, r.get("score"),
+         r.get("user_mark") or "normal", int(bool(r.get("cited"))), r.get("user_note"),
+         "beyond" if r.get("beyond") else r.get("status"), r.get("user_silicon"))
+        for doi, r in rows.items() if isinstance(r, dict)])
+    store.db.commit()
+    store.meta(f"peer_pillars:{peer_id}", {"pillars": [str(x) for x in overlay.get("pillars") or []],
+                                           "custom_tags": overlay.get("custom_tags") or [],
+                                           "updated": overlay.get("updated")})
+    return len(rows)
+
+
+def peer_ids(store):
+    """Peers with rows in peer_curation (from --sync-data-repo or --merge-store --peer), sorted."""
+    return [r[0] for r in store.db.execute("SELECT DISTINCT peer_id FROM peer_curation ORDER BY peer_id")
+            if PEER_ID_RX.match(r[0] or "")]

@@ -41,8 +41,8 @@ def configure(cfg):
             PILLAR_SHORT[i] = str(s).strip()
 
 
-def pillar_short(k, name=None):
-    if k in PILLAR_SHORT:
+def pillar_short(k, name=None, own=True):
+    if own and k in PILLAR_SHORT:  # own=False: a peer's pillar (its own name, never this radar's labels)
         return f"P{k} · {PILLAR_SHORT[k]}"
     t = re.sub(r"^\s*Pillar\s*\d+\s*[:—–-]?\s*", "", name or PILLARS.get(k, ""), flags=re.I)
     words = [w for w in re.findall(r"[A-Za-zµ][\w/µ-]*", t) if w.lower() not in _STOP]

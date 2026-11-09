@@ -1,24 +1,33 @@
-"""Shared corpus repo (v2.18): keep every collaborator's corpus identical with one command.
+"""Shared corpus repo (v2.18; peer overlays v2.19): keep every collaborator's corpus identical with one command,
+and let each one see the others' radars.
 
   python briefing.py --sync-data-repo      (also runs after every Friday finalize when the clone exists)
 
-The repo (a private Git repo named ic-paper-radar-data) holds one file, paper_store_clean_share.sqlite.
-Git can't merge a binary file, so nobody ever merges it in Git:
-  1. git fetch origin + git reset --hard origin/main: take the remote file exactly as it is
-  2. store.merge_store(): union it into this radar's own store (new DOIs as 'external', marks and notes
-     here untouched), then adopt the external papers that score ≥ min_score (data_repo.adopt_external)
-  3. store.export_clean_share_db(): write this store, cleaned, back over the repo file (every row,
-     'external' ones included), and copy it to paths.share_db when that is set
-  4. git commit + git push only if the export gives the remote something it lacks (new DOIs, objective
-     fields it has empty, higher citation counts); otherwise the remote file is restored, so two radars
-     whose exports differ only in bytes never trade commits. A rejected push (someone pushed meanwhile)
-     goes back to step 1 once more
+The repo (a private Git repo named ic-paper-radar-data) holds paper_store_clean_share.sqlite (clean: no marks,
+notes, pillars or scores) and peers/<peer_id>.json, one curation overlay per collaborator (their pillar names
+and, per paper they curated, pillar, score, stage, ⭐, Si call, 🏷️ note and status). Git can't merge the binary
+file, so nobody ever merges it in Git:
+  1. git fetch origin + git reset --hard origin/main: take the remote exactly as it is; then every other
+     peers/<id>.json replaces that peer's rows in peer_curation (store.import_peer_overlay)
+  2. store.merge_store(): union the shared file into this radar's own store (new DOIs as 'external', marks and
+     notes here untouched), then adopt the external papers that score ≥ min_score (data_repo.adopt_external)
+  3. store.export_clean_share_db(): write this store, cleaned, back over the shared file (every row, 'external'
+     ones included), and copy it to paths.share_db when that is set; then write this radar's own overlay to
+     peers/<peer_id>.json (data_repo.share_curation, share_notes)
+  4. git commit + git push only if something is new for the remote: the shared file gives it something it lacks
+     (new DOIs, objective fields it has empty, higher citation counts) or this radar's overlay changed;
+     otherwise the remote files are restored, so two radars whose exports differ only in bytes never trade
+     commits. A rejected push (someone pushed meanwhile) goes back to step 1 once more
 A reset can't lose anything: the remote's papers come in at step 2, this radar's own are in its store and
 go out at step 3. After both collaborators have run it, both stores hold the same union of DOIs.
 """
+import getpass
+import json
+import re
 import shutil
 import sqlite3
 import subprocess
+from datetime import datetime
 from pathlib import Path
 
 from env_guard import ensure_minisforum_env
@@ -29,6 +38,7 @@ import store as store_mod
 
 HERE = Path(__file__).resolve().parent
 DB_NAME = "paper_store_clean_share.sqlite"
+PEERS_DIR = "peers"
 REMOTE_MARK = "ic-paper-radar-data"  # origin must contain this before anything is reset
 
 
@@ -47,6 +57,22 @@ def _git(repo, *args, check=True):
     if check and r.returncode:
         raise RuntimeError(f"git {' '.join(args)}: {(r.stderr or r.stdout).strip()[-300:]}")
     return r
+
+
+def _slug(s):
+    return re.sub(r"[^A-Za-z0-9_.-]+", "-", str(s or "")).strip("-.")[:39]
+
+
+def peer_id(cfg, repo):
+    """This radar's name for collaborators: data_repo.peer_id, else the clone's git user.name, else the
+    login name (file-name safe)."""
+    for cand in ((cfg.get("data_repo") or {}).get("peer_id"),
+                 _git(repo, "config", "user.name", check=False).stdout.strip() if repo else "",
+                 getpass.getuser()):
+        s = _slug(cand)
+        if s and store_mod.PEER_ID_RX.match(s):
+            return s
+    return "me"
 
 
 def _count(db):
@@ -95,12 +121,53 @@ def check_clone(repo):
     return None
 
 
-def _round(store, store_path, cfg, repo, adopt, secrets, push, log):
+def import_peers(store, repo, me, log=print):
+    """Every peers/<id>.json except this radar's own → peer_curation. Returns {peer_id: rows}."""
+    out = {}
+    for f in sorted((repo / PEERS_DIR).glob("*.json")):
+        if f.stem == me or not store_mod.PEER_ID_RX.match(f.stem):
+            continue
+        try:
+            out[f.stem] = store_mod.import_peer_overlay(store, json.loads(f.read_text(encoding="utf-8")), f.stem)
+        except Exception as e:
+            log(f"  peer overlay {f.name} skipped: {e}")
+    return out
+
+
+def write_overlay(store, cfg, repo, me, secrets=()):
+    """This radar's overlay → peers/<me>.json. Rewritten only when its content changed ('updated' is the time of
+    that change), and refused if any text holds a local path or a secret. Returns (changed, rows)."""
+    import catalog  # here: catalog imports modules that import this one
+    dr = cfg.get("data_repo") or {}
+    kwmap = catalog._kw_pillars(cfg)
+    ov = store_mod.peer_overlay(store, me, [catalog.PILLARS[k] for k in sorted(catalog.PILLARS) if k],
+                                lambda p: catalog.pillar_of(p, kwmap), share_notes=dr.get("share_notes", True))
+    text = json.dumps(ov, ensure_ascii=False, sort_keys=True)
+    hit = store_mod.FORBIDDEN.search(text) or next((x for x in secrets if x and x in text), None)
+    if hit:
+        raise RuntimeError("peer overlay not written: a local path or secret is in a note")
+    f = repo / PEERS_DIR / f"{me}.json"
+    try:
+        old = json.loads(f.read_text(encoding="utf-8"))
+        old.pop("updated", None)
+    except (OSError, ValueError):
+        old = None
+    if old == json.loads(text):
+        return False, len(ov["rows"])
+    ov["updated"] = datetime.now().isoformat(timespec="seconds")
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text(json.dumps(ov, ensure_ascii=False, sort_keys=True, indent=0) + "\n", encoding="utf-8")
+    return True, len(ov["rows"])
+
+
+def _round(store, store_path, cfg, repo, me, adopt, secrets, push, log):
     db = repo / DB_NAME
     _git(repo, "fetch", "origin")
     _git(repo, "reset", "--hard", "origin/main")
     before, remote = _count(db), _snapshot(db)
-    log(f"  1. remote: {before} papers")
+    peers = import_peers(store, repo, me, log)
+    log(f"  1. remote: {before} papers" + (", peers " + ", ".join(f"{p} ({n} rows)" for p, n in peers.items())
+                                            if peers else ", no other peers yet"))
     if db.exists():
         st = store_mod.merge_store(store, db, log=lambda m: None)
         msg = f"  2. merged: {st['new']} new, {st['enriched']} enriched"
@@ -118,35 +185,43 @@ def _round(store, store_path, cfg, repo, adopt, secrets, push, log):
         Path(share).expanduser().parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(db, Path(share).expanduser())
     added, better = _gain(remote, _snapshot(db))
-    if not (added or better) or not _git(repo, "status", "--porcelain").stdout.strip():
+    if not (added or better):
         _git(repo, "checkout", "--", DB_NAME, check=False)  # keep the remote's file as it is
+    ov_changed, ov_rows = False, 0
+    if (cfg.get("data_repo") or {}).get("share_curation", True):
+        ov_changed, ov_rows = write_overlay(store, cfg, repo, me, secrets)
+        log(f"     overlay peers/{me}.json: {ov_rows} rows" + (" (changed)" if ov_changed else " (unchanged)"))
+    _git(repo, "add", "-A", "--", DB_NAME, *([PEERS_DIR] if (repo / PEERS_DIR).exists() else []))
+    if not _git(repo, "status", "--porcelain").stdout.strip():
         log("  4. nothing new for the remote: no commit")
-        return True, s["papers"]
-    _git(repo, "add", DB_NAME)
-    _git(repo, "commit", "-m", f"Sync shared corpus ({s['papers']} papers, +{added} new, {better} enriched)")
+        return True, s["papers"], peers
+    what = [f"{s['papers']} papers, +{added} new, {better} enriched"] if (added or better) else []
+    what += [f"{me}'s radar ({ov_rows} rows)"] if ov_changed else []
+    _git(repo, "commit", "-m", f"Sync shared corpus ({'; '.join(what)})")
     if not push:
         log("  4. committed locally (no push)")
-        return True, s["papers"]
+        return True, s["papers"], peers
     r = _git(repo, "push", "origin", "HEAD:main", check=False)
     if r.returncode:
         log("  4. push rejected: the remote moved meanwhile")
-        return False, s["papers"]
-    log(f"  4. pushed: {s['papers']} papers (+{s['papers'] - before})")
-    return True, s["papers"]
+        return False, s["papers"], peers
+    log(f"  4. pushed: {'; '.join(what)}")
+    return True, s["papers"], peers
 
 
 def sync(store, store_path, cfg, adopt=None, secrets=(), push=True, log=print):
     """Steps 1–4 (see the module docstring), with one retry from step 1 after a rejected push.
-    Returns the paper count of the shared file; raises RuntimeError on any failure."""
+    Returns {'papers': n, 'peers': {peer_id: rows}}; raises RuntimeError on any failure."""
     repo = repo_dir(cfg)
     why = check_clone(repo)
     if why:
         raise RuntimeError(why)
-    log(f"Shared corpus: {repo}")
+    me = peer_id(cfg, repo)
+    log(f"Shared corpus: {repo} (this radar: {me})")
     for attempt in (1, 2):
-        done, n = _round(store, store_path, cfg, repo, adopt, secrets, push, log)
+        done, n, peers = _round(store, store_path, cfg, repo, me, adopt, secrets, push, log)
         if done:
-            return n
+            return {"papers": n, "peers": peers}
         if attempt == 1:
             log("  retrying once from step 1")
     raise RuntimeError("push rejected twice; run --sync-data-repo again later")

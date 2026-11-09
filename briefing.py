@@ -430,13 +430,17 @@ def adopt_external(store, cfg):
 def sync_data_repo(store, store_path, cfg, push=True, log=print):
     """--sync-data-repo, and after every Friday finalize when the clone exists (data_repo.py): fetch + reset
     the shared corpus repo, merge its file into this store (+ adopt), export the clean union back, commit and
-    push if it changed. A failure is logged and never fails the run. Returns 0 / 1."""
+    push if it changed; peers' overlays (peers/<id>.json) come in and this radar's goes out (v2.19), then the
+    HTML is rewritten so Peers/DASHBOARD_<peer>.html is current. A failure is logged and never fails the run.
+    Returns 0 / 1."""
     try:
         data_repo.sync(store, store_path, cfg, adopt=adopt_external, secrets=(curation.sync_token(),), push=push, log=log)
-        return 0
     except Exception as e:
         log(f"Shared corpus not synced: {e}")
         return 1
+    if push:  # not from a --dry-run copy
+        html_renderer.write_all(store, cfg, log)
+    return 0
 
 
 def backup_store(store, cfg, log=print):
@@ -544,6 +548,8 @@ def main():
     if a.merge_store or a.adopt_external or a.export_share is not None or a.sync_data_repo:
         if a.merge_store:
             store_mod.merge_store(store, a.merge_store, a.peer)
+            if a.peer and not a.dry_run:  # the peer's page (Peers/DASHBOARD_<peer>.html) and the header link
+                html_renderer.write_all(store, cfg)
         if a.adopt_external:
             print(f"Adopted {adopt_external(store, cfg)} external papers into the archive (≥ min_score)")
         if a.export_share is not None:

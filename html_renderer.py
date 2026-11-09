@@ -23,6 +23,7 @@ import catalog
 import curation
 import fetcher
 import relations
+import store as store_mod
 
 MERMAID = "https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"
 
@@ -153,6 +154,9 @@ gap:4px;min-width:230px;max-height:75vh;overflow-y:auto;box-shadow:0 8px 24px rg
 padding:4px 8px;border-radius:6px;border:1px solid var(--line);background:var(--card);color:var(--fg);font:inherit;font-size:13.5px}
 input.note:focus{outline:none;border-color:var(--accent)}.nstate{color:var(--ok);font-size:12px}
 .welcome{margin:10px 12px;padding:14px 16px;border:2px solid var(--accent);border-radius:10px;background:var(--chip);font-size:15px;line-height:1.5}
+.peerbanner{margin:0;padding:10px 16px;background:var(--citebg);border-bottom:2px solid var(--cite);font-size:14.5px}
+.peers{position:relative;display:inline-block}.peers>summary{list-style:none}.peers>summary::-webkit-details-marker{display:none}
+.btn:disabled{opacity:.7;cursor:default}input.note[readonly]{border:0;background:transparent}
 tr.banner td{background:var(--chip);font-weight:600;font-size:14.5px;border-top:2px solid var(--accent)}
 tr.subbanner td{color:var(--muted);font-size:12.5px;font-weight:600;padding:4px 8px}
 .cur{display:inline-flex;gap:6px;margin:4px 0}.pill.live{border-color:var(--ok);color:var(--ok)}
@@ -191,8 +195,11 @@ table.papers tr.empty td{display:block}
 JS_COMMON = r"""
 const LS = 'paper_radar_marks_v1';
 const PAGE = JSON.parse(document.getElementById('radar-data').textContent);
+// a collaborator's radar (Peers/DASHBOARD_<peer>.html, v2.19): read-only, so nothing on it can reach this radar's
+// own store: no browser queue, no live sync, no file export; the buttons show the peer's choices, disabled
+const RO = !!PAGE.readonly;
 let store = {};
-try { store = JSON.parse(localStorage.getItem(LS) || '{}'); } catch (e) { store = {}; }
+if (!RO) try { store = JSON.parse(localStorage.getItem(LS) || '{}'); } catch (e) { store = {}; }
 // drop clicks whose starting point no longer matches what this (newer) page embeds, or that are already applied
 for (const [doi, o] of Object.entries(store)) {
   const base = PAGE.marks[doi];
@@ -203,19 +210,21 @@ for (const [doi, o] of Object.entries(store)) {
 const LSN = 'paper_radar_notes_v1';
 PAGE.notes = PAGE.notes || {};
 let nstore = {};
-try { nstore = JSON.parse(localStorage.getItem(LSN) || '{}'); } catch (e) { nstore = {}; }
+if (!RO) try { nstore = JSON.parse(localStorage.getItem(LSN) || '{}'); } catch (e) { nstore = {}; }
 for (const [doi, o] of Object.entries(nstore)) {
   if (PAGE.marks[doi] === undefined) continue;
   const base = PAGE.notes[doi] || '';
   if (base !== o.base || base === o.note) delete nstore[doi];
 }
 function persist() {
+  if (RO) return;
   try { localStorage.setItem(LS, JSON.stringify(store)); localStorage.setItem(LSN, JSON.stringify(nstore)); } catch (e) {}
 }
 persist();
 function cleanNote(s) { return String(s || '').split(/\s+/).filter(Boolean).join(' ').slice(0, 200); }
 function noteOf(doi) { return nstore[doi] ? nstore[doi].note : (PAGE.notes[doi] || ''); }
 function setNote(doi, note) {
+  if (RO) return;
   note = cleanNote(note);
   if (note === noteOf(doi)) { refreshBars(); return; }
   const base = PAGE.notes[doi] || '';
@@ -236,6 +245,7 @@ function citedOf(doi) { return markOf(doi).split('+').includes('cite'); }
 function siOf(doi) { const f = markOf(doi).split('+'); return f.includes('si') ? 'si' : f.includes('sim') ? 'sim' : ''; }
 function fmtMark(st, c, si) { return st + (c ? '+cite' : '') + (si ? '+' + si : ''); }
 function setMark(doi, mark) {
+  if (RO) return;
   const base = PAGE.marks[doi] || 'normal';
   if (mark === base) delete store[doi]; else store[doi] = {mark, base, t: Date.now()};
   persist(); refreshBars(); if (window.onMarkChange) window.onMarkChange(doi);
@@ -247,6 +257,7 @@ const SYNC = PAGE.sync || {hosts: [], port: 0, token: ''};
 let LIVE = null;   // base URL of the reachable server
 function hdr() { return {'Content-Type': 'application/json', 'X-Radar-Token': SYNC.token}; }
 async function probe() {
+  if (RO) { LIVE = null; pill(); return; }  // never /status or /mark from a peer's page
   // served by radar_sync_server.py itself (iPhone / any browser over http): same origin first, no CORS or file:// limits
   const bases = (location.protocol.startsWith('http') ? [location.origin] : [])
     .concat(SYNC.hosts.map(h => `http://${h}:${SYNC.port}`));
@@ -326,7 +337,7 @@ async function writeHandle(h) {
   const w = await h.createWritable(); await w.write(marksJson()); await w.close(); return true;
 }
 async function autoWriteFile() {
-  if (LIVE || !HANDLE || !pending()) return;
+  if (RO || LIVE || !HANDLE || !pending()) return;
   try { if (await writeHandle(HANDLE)) pill('file'); } catch (e) { /* permission lapsed: next click asks again */ }
 }
 async function chooseFile() {
@@ -336,6 +347,8 @@ async function chooseFile() {
 }
 function pill(flash) {
   const el = document.getElementById('syncpill'); if (!el) return;
+  if (RO) { el.textContent = '👤 Read-only'; el.className = 'btn pill';
+    el.title = "A collaborator's radar: nothing you click here changes your own radar"; return; }
   if (LIVE) { el.textContent = flash === 'saved' ? '🟢 Live Sync · saved' : '🟢 Live Sync';
     el.title = 'Clicks go straight to ' + LIVE; el.className = 'btn pill live'; return; }
   el.className = 'btn pill offline';
@@ -346,6 +359,7 @@ function pill(flash) {
                                : 'Use 💾 Save Marks to export them.');
 }
 async function pillClick() {
+  if (RO) return;
   if (LIVE) { probe(); return; }
   await probe(); if (LIVE) return;
   if (window.showSaveFilePicker) { try { await writeHandle(HANDLE || await chooseFile()); pill('file'); } catch (e) {} }
@@ -366,17 +380,17 @@ function cycleSi(doi) {
 function siBadge(doi, auto) { return {si: '✅', sim: '⚠️ sim'}[siOf(doi)] || auto; }
 function siCell(doi, auto, tag) {
   const user = !!siOf(doi), b = siBadge(doi, auto);
-  return `<${tag} class="btn sibtn ${b==='✅'?'ok':'warn'} ${user?'user':''}" onclick="event.stopPropagation();cycleSi('${doi}')" ` +
-    `title="${user ? 'Set by you after reading the PDF' : 'Automatic guess (' + esc(auto) + ')'} · Click to set Silicon-Verified / ` +
+  return `<${tag} class="btn sibtn ${b==='✅'?'ok':'warn'} ${user?'user':''}" ${RO?'disabled':''} onclick="event.stopPropagation();cycleSi('${doi}')" ` +
+    `title="${user ? (RO ? 'Set by ' + esc(PAGE.peer) : 'Set by you') + ' after reading the PDF' : 'Automatic guess (' + esc(auto) + ')'} · Click to set Silicon-Verified / ` +
     `Simulation-Only (User confirmed) / back to auto">${b}${user ? '<sup>✓</sup>' : ''}</${tag}>`;
 }
 function pending() { return Object.keys(store).length + Object.keys(nstore).length; }
 function curButtons(doi) {
   const st = stageOf(doi), c = citedOf(doi);
   return `<span class="cur" onclick="event.stopPropagation()">` +
-    `<button class="btn sel ${st==='selected'?'on':''}" onclick="toggle('${doi}','selected')">✅ Select</button>` +
-    `<button class="btn cite ${c?'on':''}" onclick="toggle('${doi}','cite')">⭐ Cite</button>` +
-    `<button class="btn arch ${st==='archived'?'on':''}" onclick="toggle('${doi}','archived')">🗄️ Archive</button></span>`;
+    `<button class="btn sel ${st==='selected'?'on':''}" ${RO?'disabled':''} onclick="toggle('${doi}','selected')">✅ Select</button>` +
+    `<button class="btn cite ${c?'on':''}" ${RO?'disabled':''} onclick="toggle('${doi}','cite')">⭐ Cite</button>` +
+    `<button class="btn arch ${st==='archived'?'on':''}" ${RO?'disabled':''} onclick="toggle('${doi}','archived')">🗄️ Archive</button></span>`;
 }
 function refreshCur() { document.querySelectorAll('[data-cur]').forEach(el => el.innerHTML = curButtons(el.dataset.cur)); }
 function refreshBars() {
@@ -402,6 +416,7 @@ function downloadBib(pool) {  // cite.bib = every ⭐; selected_pool.bib = ✅ o
   download(name, `% IC Paper Radar — ${name} exported from the browser\n\n` + bib.join('\n\n') + '\n', 'application/x-bibtex');
 }
 async function saveMarks() {
+  if (RO) { alert("Read-only: this is a collaborator's radar."); return; }
   if (!pending()) { alert(LIVE ? 'Everything is already synced.' : 'No unsaved clicks.'); return; }
   await probe(); if (LIVE) { await flush(); return; }
   if (window.showSaveFilePicker) {
@@ -439,7 +454,7 @@ refreshBars(); pill(); probe(); setInterval(() => {{ if (!LIVE) probe(); }}, 600
 </body></html>"""
 
 
-def _bar(title, home=None, extra=""):
+def _bar(title, home=None, extra="", readonly=False):
     return (f'<h1>{html.escape(title)}</h1>'
             + (f'<a class="btn" href="{home}">← Dashboard</a>' if home else "") + extra
             + '<button id="syncpill" class="btn pill" onclick="pillClick()">⏳ Connecting…</button>'
@@ -449,8 +464,8 @@ def _bar(title, home=None, extra=""):
               '📥 Download cite.bib (⭐ <span id="bibn" class="count">0</span>)</button>'
             + '<button class="btn sec" onclick="downloadBib(true)" title="✅ Selected + ⭐ Cite">'
               '📥 Download selected_pool.bib (✅+⭐ <span id="pooln" class="count">0</span>)</button>'
-            + '<button class="btn" onclick="saveMarks()" title="Only needed offline">💾 Save Marks '
-              '(<span id="pending" class="count">0</span> queued)</button>'
+            + ('' if readonly else '<button class="btn" onclick="saveMarks()" title="Only needed offline">💾 Save Marks '
+               '(<span id="pending" class="count">0</span> queued)</button>')
             + '<button class="btn sec" onclick="theme()" title="light/dark">◐</button>')
 
 
@@ -501,33 +516,64 @@ def paper_records(store, cfg, dives=None):
     if cfg.get("dashboard_corpus"):  # Starter Edition: the whole pre-loaded IEEE corpus is searchable under "All"
         for p in store.where("grp='ieee'"):
             pool.setdefault(p["doi"], p)
-    keys, kwmap, recs = set(), catalog._kw_pillars(cfg), []
-    for p in sorted(pool.values(), key=lambda p: p["doi"]):
-        key = catalog.bib_key(p, keys)
-        lin = p.get("lineage") or []
-        digest = p.get("digest") or ""
-        ym = relations._ym(p.get("published"))  # IEEE dates come as '2026-10-21', 'Oct. 2026', '14-18 June 2026'
-        recs.append({
-            "doi": p["doi"], "title": fetcher.tidy_tex(p["title"]), "venue": p["venue"], "venue_name": p.get("venue_name") or "",
-            "date": f"{ym // 12}-{ym % 12 + 1:02d}" if ym else "", "raw_date": str(p.get("published") or ""),
-            "year": catalog._year(p), "score": p.get("score") or 0,
-            "authors": catalog._first_last(p), "all_authors": ", ".join((p.get("authors") or [])[:12]),
-            # the automatic guess; the page shows the user's override (in the mark, "+si"/"+sim") on top of it
-            "silicon_auto": catalog.silicon(p, cfg, auto=True), "pillar": catalog.pillar_of(p, kwmap) if p.get("grp") != "beyond" else 0,
-            "beyond": p.get("grp") == "beyond", "lineage": bool(lin), "status": p.get("status"), "week": p.get("week") or "",
-            "pin": catalog.PIN_TAG.get(p.get("pin"), ""), "catchup": bool(p.get("catchup")),
-            # core radar = weekly candidates/reported (incl. catch-up, Beyond IEEE) and pinned papers; a
-            # topic-dive-only paper is not core, so it stays out of 📋 Active and the pillar views
-            "core": p.get("status") in ("candidate", "reported", "pinned") or bool(p.get("pin")),
-            "topics": in_topic.get(p["doi"], []), "key": catalog.key_numbers(p),
-            "hits": [h for h in p.get("hits") or [] if h not in ("silicon_verified", "simulation_only")][:10],
-            "digest_html": md_to_html(digest) if digest else "<p class='muted'>No digest yet.</p>",
-            "lineage_html": "".join(f"<p>📈 <strong>{'Extended from' if l['type'] == 'journal_extension_of' else 'Journal extension'}"
-                                    f" {html.escape(str(l['venue']))} {l.get('year') or ''}:</strong> "
-                                    f"<a href='https://doi.org/{l['doi']}'>{html.escape(l['title'])}</a> "
-                                    f"<span class='muted'>({html.escape(l['signal'])})</span></p>" for l in lin),
-            "abstract": p.get("abstract") or "", "mark": curation.mark_of(p), "note": p.get("user_note") or "",
-            "bib": catalog.bib_entry(p, key)})
+    keys, kwmap = set(), catalog._kw_pillars(cfg)
+    return [_record(p, cfg, kwmap, keys, in_topic) for p in sorted(pool.values(), key=lambda p: p["doi"])]
+
+
+def _record(p, cfg, kwmap, keys, in_topic):
+    """One paper as page data (the dashboard and the peer pages); its BibTeX key is made unique within `keys`."""
+    key = catalog.bib_key(p, keys)
+    lin = p.get("lineage") or []
+    digest = p.get("digest") or ""
+    ym = relations._ym(p.get("published"))  # IEEE dates come as '2026-10-21', 'Oct. 2026', '14-18 June 2026'
+    return {
+        "doi": p["doi"], "title": fetcher.tidy_tex(p["title"]), "venue": p["venue"], "venue_name": p.get("venue_name") or "",
+        "date": f"{ym // 12}-{ym % 12 + 1:02d}" if ym else "", "raw_date": str(p.get("published") or ""),
+        "year": catalog._year(p), "score": p.get("score") or 0,
+        "authors": catalog._first_last(p), "all_authors": ", ".join((p.get("authors") or [])[:12]),
+        # the automatic guess; the page shows the user's override (in the mark, "+si"/"+sim") on top of it
+        "silicon_auto": catalog.silicon(p, cfg, auto=True), "pillar": catalog.pillar_of(p, kwmap) if p.get("grp") != "beyond" else 0,
+        "beyond": p.get("grp") == "beyond", "lineage": bool(lin), "status": p.get("status"), "week": p.get("week") or "",
+        "pin": catalog.PIN_TAG.get(p.get("pin"), ""), "catchup": bool(p.get("catchup")),
+        # core radar = weekly candidates/reported (incl. catch-up, Beyond IEEE) and pinned papers; a
+        # topic-dive-only paper is not core, so it stays out of 📋 Active and the pillar views
+        "core": p.get("status") in ("candidate", "reported", "pinned") or bool(p.get("pin")),
+        "topics": in_topic.get(p["doi"], []), "key": catalog.key_numbers(p),
+        "hits": [h for h in p.get("hits") or [] if h not in ("silicon_verified", "simulation_only")][:10],
+        "digest_html": md_to_html(digest) if digest else "<p class='muted'>No digest yet.</p>",
+        "lineage_html": "".join(f"<p>📈 <strong>{'Extended from' if l['type'] == 'journal_extension_of' else 'Journal extension'}"
+                                f" {html.escape(str(l['venue']))} {l.get('year') or ''}:</strong> "
+                                f"<a href='https://doi.org/{l['doi']}'>{html.escape(l['title'])}</a> "
+                                f"<span class='muted'>({html.escape(l['signal'])})</span></p>" for l in lin),
+        "abstract": p.get("abstract") or "", "mark": curation.mark_of(p), "note": p.get("user_note") or "",
+        "bib": catalog.bib_entry(p, key)}
+
+
+def peer_records(store, cfg, peer):
+    """The papers `peer` curated (peer_curation), for its read-only page: this store's objective data (title,
+    authors, abstract, digest without its Pillar line, references, lineage, BibTeX) under the peer's own pillar,
+    score, stage, ⭐, Si call, 🏷️ note and status. Only the peer's radar is shown: its candidate / reported / pinned /
+    Beyond papers and whatever it marked, starred, noted or set Si on. Papers it merely scored stay in peer_curation
+    (thousands of rows: a 12 MB page on a phone). This radar's keyword hits and topic dives are left out; a paper
+    this store doesn't have (yet) is skipped."""
+    rows = store.db.execute("SELECT doi, pillar, score, user_mark, cited, user_note, status, user_silicon "
+                            "FROM peer_curation WHERE peer_id=? ORDER BY doi", (peer,)).fetchall()
+    keys, recs = set(), []
+    for doi, pillar, score, mark, cited, note, status, si in rows:
+        if (mark or "normal") == "normal" and not (cited or note or si) \
+                and status not in ("candidate", "reported", "pinned", "beyond"):
+            continue
+        p = store.get(doi)
+        if not p:
+            continue
+        beyond = status == "beyond" or p.get("grp") == "beyond"
+        p = {**p, "score": score or 0, "user_mark": mark or "normal", "cited": cited or 0, "user_note": note,
+             "user_silicon": si, "status": "candidate" if status == "beyond" else status, "pin": None,
+             "catchup": None, "week": None, "hits": [], "digest": store_mod._strip_pillar(p.get("digest"))}
+        r = _record(p, cfg, {}, keys, {})
+        r["pillar"] = 0 if beyond else (int(pillar) if str(pillar or "").isdigit() else 0)
+        r["beyond"] = beyond
+        recs.append(r)
     return recs
 
 
@@ -568,7 +614,7 @@ const VIEW_TITLE = {weekly: 'The radar\'s own papers: weekly + catch-up + pinned
 // ⚙️ Customize views in the folder). Shared by every device (v2.12): saved by the sync server (POST /prefs →
 // dashboard_prefs.json, also embedded in the page when it's generated) and in this browser; the newest (`t`) wins.
 // Views added in a later version join their default place.
-const LAYOUT_KEY = 'paper_radar_view_layout_v1';
+const LAYOUT_KEY = RO ? 'paper_radar_view_layout_peer_v1' : 'paper_radar_view_layout_v1';  // a peer page keeps its own
 const DEFAULT_MORE = ['silicon', 'pinned', 'lineage', 'archived'];
 const DEFAULT_LAYOUT = {main: FILTERS.map(f => f[0]).filter(k => !DEFAULT_MORE.includes(k)), more: DEFAULT_MORE.slice(), t: 0};
 let layout = loadLayout(), customizing = false;
@@ -837,13 +883,13 @@ function rowHtml(p) {
     const note = noteOf(p.doi);  // the user's 🏷️ Tech note: always visible, even with the tags collapsed
     const main = `<tr class="paper ${citedOf(p.doi)?'cite':''}" id="r-${CSS.escape(p.doi)}" onclick="tg('${p.doi}')">` +
       `<td class="c-date" title="${esc(p.raw_date)}">${p.date}</td><td class="c-venue">${p.venue}</td><td class="c-title"><a href="https://doi.org/${p.doi}" target="_blank" onclick="event.stopPropagation()">${esc(p.title)}</a>` +
-      (note ? `<div><span class="tag notetag" title="Your 🏷️ Tech note">🏷️ ${esc(note)}</span></div>` : '') +
+      (note ? `<div><span class="tag notetag" title="${RO ? escA(PAGE.peer) + '&#39;s' : 'Your'} 🏷️ Tech note">🏷️ ${esc(note)}</span></div>` : '') +
       `<div class="muted">${esc(p.authors)} ${tags}</div></td><td class="count c-score">${p.score}</td>` +
       `<td class="c-si">${siCell(p.doi, p.silicon_auto, 'button')}</td><td class="hide-sm c-pillar">${pillarPill(p)}</td>` +
       `<td class="hide-sm muted c-key">${esc(p.key)}</td><td class="c-cur" data-cur="${p.doi}">${curButtons(p.doi)}</td></tr>`;
     const det = isOpen ? `<tr class="detail"><td colspan="8"><p class="muted">🔬 Silicon: ${siCell(p.doi, p.silicon_auto, 'button')} ` +
       `click to cycle ✅ Silicon-Verified → ⚠️ Simulation-Only → automatic (${esc(p.silicon_auto)})</p>` +
-      `<p class="muted noteline">🏷️ Tech note: <input class="note" data-doi="${p.doi}" value="${escA(note)}" maxlength="200" ` +
+      `<p class="muted noteline">🏷️ Tech note: <input class="note" data-doi="${p.doi}" value="${escA(note)}" maxlength="200" ${RO?'readonly':''} ` +
       `placeholder="Key technique / takeaway (e.g. gate-leakage PTAT, floating inverter amp)…" onkeydown="noteKey(event, this)" ` +
       `onblur="saveNote(this)"> <span class="nstate" data-nstate="${p.doi}">${noteState(p.doi)}</span></p>${p.lineage_html}${p.digest_html}` +
       `<details><summary class="muted">Abstract · hits · BibTeX</summary><p>${esc(p.abstract)||'<span class=muted>No abstract.</span>'}</p>` +
@@ -882,7 +928,7 @@ render();
 """
 
 
-def write_dashboard(store, cfg, path):
+def write_dashboard(store, cfg, path, peers=()):
     dives = topic_dives(store, cfg)
     recs = paper_records(store, cfg, dives)
     data = {"generated": datetime.now().strftime("%Y-%m-%d %H:%M"), "papers": recs, "topics": dives,
@@ -900,13 +946,29 @@ Open <code>README.md</code> to configure your research domains with AI"""
                + "</div>" if data["welcome"] else "")
     if not n_store:  # the same tip briefing.py prints
         welcome += f'<div class="welcome">💡 {html.escape(fetcher.STORE_TIP)}</div>'
-    # tier 1 = views · tier 2 = 📅 Weekly Brief's pillars / 🔎 Topic Dives' dives · tier 3 = curation stage
-    body = welcome + f"""<div class="filters" id="filters"></div>
+    body = welcome + _dash_body(data["generated"], '<a href="INDEX.md">INDEX.md</a>',
+                                "Click a row for the full digest. Clicks are kept in this browser; <b>💾 Save Marks</b> "
+                                "sends them to the Radar (curation_marks.json in output/ or Downloads), applied on the next "
+                                "run or <code>briefing.py --sync</code>.")
+    Path(path).write_text(_page("IC Paper Radar — Dashboard", "", _bar("📡 IC Paper Radar", extra=TAGS_BTN + _peer_links(peers)),
+                                body, data, DASH_JS), encoding="utf-8")
+    return len(recs)
+
+
+SEARCH_HINT = "Search title, author, venue, numbers, 🏷️ notes (e.g. 'SAR', 'PLL', 'nW', 'ISSCC')…"
+TAGS_BTN = ('<button id="tagsbtn" class="btn sec" onclick="toggleTags()" title="Show every row\'s tags '
+            '(week, catch-up, anchor, 📈, topic) or collapse them into a +N pill">🏷️ Tags</button>')
+
+
+def _dash_body(generated, index_link, foot):
+    """The dashboard's filter bars, search row and table (main page and peer pages).
+    tier 1 = views · tier 2 = 📅 Weekly Brief's pillars / 🔎 Topic Dives' dives · tier 3 = curation stage"""
+    return f"""<div class="filters" id="filters"></div>
 <div class="filters topicbar" id="tier2" style="display:none"></div>
 <div class="filters tier3" id="statusbar" style="display:none"></div>
-<div class="filters srow"><input id="q" class="search" placeholder="Search title, author, venue, numbers, 🏷️ notes (e.g. 'SAR', 'PLL', 'nW', 'ISSCC')…">
-<span class="muted" style="align-self:center"><span id="nrows" class="count">0</span> papers · generated {data['generated']} ·
-<a href="INDEX.md">INDEX.md</a></span></div>
+<div class="filters srow"><input id="q" class="search" placeholder="{html.escape(SEARCH_HINT)}">
+<span class="muted" style="align-self:center"><span id="nrows" class="count">0</span> papers · generated {generated} ·
+{index_link}</span></div>
 <main><div id="pillarnote" class="pnote"></div>
 <div class="msort"><span class="muted">Sort:</span><button class="btn" data-sort="date" onclick="sortBy('date')">Date</button>
 <button class="btn" data-sort="score" onclick="sortBy('score')">Score</button><button class="btn" data-sort="venue" onclick="sortBy('venue')">Venue</button></div>
@@ -914,13 +976,7 @@ Open <code>README.md</code> to configure your research domains with AI"""
 <th class="sort" onclick="sortBy('venue')">Venue</th><th class="sort" onclick="sortBy('title')">Title</th>
 <th class="sort" onclick="sortBy('score')">Score</th><th>Si</th><th class="hide-sm">Pillar</th><th class="hide-sm">Key numbers</th>
 <th>Curation</th></tr></thead><tbody id="tbody"></tbody></table></div>
-<p class="muted">Click a row for the full digest. Clicks are kept in this browser; <b>💾 Save Marks</b> sends them to the
-Radar (curation_marks.json in output/ or Downloads), applied on the next run or <code>briefing.py --sync</code>.</p></main>"""
-    tags_btn = ('<button id="tagsbtn" class="btn sec" onclick="toggleTags()" title="Show every row\'s tags '
-                '(week, catch-up, anchor, 📈, topic) or collapse them into a +N pill">🏷️ Tags</button>')
-    Path(path).write_text(_page("IC Paper Radar — Dashboard", "", _bar("📡 IC Paper Radar", extra=tags_btn), body, data, DASH_JS),
-                          encoding="utf-8")
-    return len(recs)
+<p class="muted">{foot}</p></main>"""
 
 
 # ---------- report pages (.md → .html with real buttons) ----------
@@ -950,16 +1006,67 @@ def write_report_html(md_path, store, home, sync):
     return out
 
 
+def _peer_links(peers):
+    """The main dashboard's header link to the peer pages: one button, or a 👥 Peers ▾ menu for several."""
+    if not peers:
+        return ""
+    a = lambda peer, href, n, label: (f'<a class="btn" href="{href}" title="{html.escape(peer)}\'s radar: {n} papers, '
+                                      f'read-only">{label}</a>')
+    if len(peers) == 1:
+        return a(*peers[0], f"👥 {html.escape(peers[0][0])}'s Radar ↗")
+    return ('<details class="peers"><summary class="btn">👥 Peers ▾</summary><div class="menu">'
+            + "".join(a(p, h, n, f"👥 {html.escape(p)} ({n})") for p, h, n in peers) + "</div></details>")
+
+
+def write_peer_dashboards(store, cfg, log=print):
+    """Peers/DASHBOARD_<peer>.html for every peer with rows in peer_curation (--sync-data-repo overlays or
+    --merge-store --peer): the same dashboard, read-only, with the peer's pillars and curation. Pages of peers
+    that are gone are removed. Returns [(peer, href, papers)] for the main dashboard's header link."""
+    d = Path(cfg["paths"]["onedrive_root"]) / "Peers"
+    out = []
+    for peer in store_mod.peer_ids(store):
+        recs = peer_records(store, cfg, peer)
+        if not recs:
+            continue
+        info = store.meta(f"peer_pillars:{peer}") or {}
+        names = info.get("pillars") or [f"Pillar {k}" for k in range(1, max(r["pillar"] for r in recs) + 1)]
+        gen = datetime.now().strftime("%Y-%m-%d %H:%M")
+        data = {"generated": gen, "papers": recs, "topics": [], "weeks": [], "readonly": True, "peer": peer,
+                "marks": {r["doi"]: r["mark"] for r in recs}, "bib": {r["doi"]: r["bib"] for r in recs},
+                "notes": {r["doi"]: r["note"] for r in recs if r["note"]},
+                "pillars": [{"k": f"p{i}", "n": i, "short": catalog.pillar_short(i, name, own=False), "name": name}
+                            for i, name in enumerate(names, 1)],
+                "sync": {"hosts": [], "port": 0, "token": "", "timeout": 0}}  # no token: this page can't write
+        upd = f" · updated {html.escape(str(info['updated'])[:16].replace('T', ' '))}" if info.get("updated") else ""
+        body = (f'<div class="peerbanner">👤 Viewing <b>{html.escape(peer)}</b>\'s Radar (Read-Only){upd} · '
+                f'<a href="../DASHBOARD.html">← Back to My Dashboard</a></div>'
+                + _dash_body(gen, '<a href="../DASHBOARD.html">My Dashboard</a>',
+                             f"{html.escape(peer)}'s pillars, scores, ✅ / ⭐ / 🗄️ choices and 🏷️ notes, from the "
+                             "shared corpus repo (<code>--sync-data-repo</code>). Read-only: clicks here change nothing."))
+        d.mkdir(parents=True, exist_ok=True)
+        (d / f"DASHBOARD_{peer}.html").write_text(
+            _page(f"IC Paper Radar — {peer}'s Radar", "", _bar(f"👤 {peer}'s Radar", "../DASHBOARD.html", TAGS_BTN, readonly=True),
+                  body, data, DASH_JS), encoding="utf-8")
+        out.append((peer, f"Peers/DASHBOARD_{peer}.html", len(recs)))
+    keep = {f"DASHBOARD_{p}.html" for p, _, _ in out}
+    for f in d.glob("DASHBOARD_*.html") if d.exists() else []:
+        if f.name not in keep:
+            f.unlink()
+    return out
+
+
 def write_all(store, cfg, log=print):
     root = Path(cfg["paths"]["onedrive_root"])
-    n = write_dashboard(store, cfg, root / "DASHBOARD.html")
+    peers = write_peer_dashboards(store, cfg, log)
+    n = write_dashboard(store, cfg, root / "DASHBOARD.html", peers)
     pages = 0
     for d in (Path(cfg["paths"]["weekly_dir"]), Path(cfg["paths"]["topic_dir"])):
         for f in d.glob("*.md") if d.exists() else []:
             write_report_html(f, store, "../DASHBOARD.html", curation.page_sync_config(cfg))
             pages += 1
     write_phone_link(cfg)
-    log(f"HTML: DASHBOARD.html ({n} papers) + {pages} report pages")
+    log(f"HTML: DASHBOARD.html ({n} papers) + {pages} report pages"
+        + "".join(f" + Peers/DASHBOARD_{p}.html ({k})" for p, _, k in peers))
 
 
 def write_phone_link(cfg):

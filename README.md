@@ -393,6 +393,22 @@ It also runs after every Friday finalize when the clone exists (`"friday_sync": 
 After both of you have run it, both stores hold the same union of papers.
 运行后双方的论文库包含相同的论文并集；每周五定稿后也会自动同步。
 
+#### See each other's radar / 查看对方的雷达
+
+The shared `.sqlite` stays clean, but each sync also writes **your radar** next to it as
+`peers/<your id>.json`: your pillar names and, for every paper you curated, its pillar, score, ✅ / ⭐ / 🗄️,
+Si call, 🏷️ note and status. It reads your colleague's file and builds a read-only copy of their dashboard,
+**`output/Peers/DASHBOARD_<id>.html`**, linked from your dashboard's header as **👥 <id>'s Radar ↗** (or a
+👥 Peers ▾ menu). It's the same page (search, filters, row details, BibTeX download) with their pillars and
+choices; nothing you click there changes your own radar.
+每次同步还会把你的雷达（pillar 名称、标记、⭐、评分、笔记）写成 `peers/<id>.json`，并为对方生成只读面板
+`output/Peers/DASHBOARD_<id>.html`，在你的面板顶部点击 👥 即可打开。
+
+In `config.json` → `"data_repo"`: `"peer_id"` is your name in `peers/` (empty = your Git `user.name`),
+`"share_curation": false` publishes nothing, `"share_notes": false` keeps your 🏷️ notes private. Everyone with
+access to the shared repo can read what you publish.
+`python briefing.py --merge-store their.sqlite --peer NAME` builds the same read-only page from a store file.
+
 #### The building blocks / 底层命令
 
 ```bash
