@@ -96,6 +96,14 @@ weighted keywords; a paper's score is the sum of the weights it hits. The `pilla
 **intentionally empty**: until you fill them, `python briefing.py` stops with a `[SETUP REQUIRED]`
 message (only `--topic` and `--recall` work without pillars).
 
+**Your `config.json`** is created from the template `config.example.json` the first time you run any
+command (e.g. `python briefing.py --help`), or copy it yourself: `cp config.example.json config.json`
+(Windows: `copy config.example.json config.json`). Edit only `config.json`: Git ignores it, so `git pull`
+never overwrites or conflicts with your settings, and new settings in later versions reach you
+automatically (see "Updating").
+**你的 `config.json`** 在首次运行任意命令时由模板 `config.example.json` 自动生成（也可手动复制）。只编辑
+`config.json`：Git 会忽略它，`git pull` 不会覆盖或冲突，新版本新增的设置会自动生效。
+
 **pillar** 指一个研究方向（如 "Noise-shaping SAR ADCs"）。每个 pillar 拥有一组带权重的关键词，论文得分 =
 命中关键词的权重之和。`config.json` 中的 `pillars`、`positive_keywords`、`negative_keywords`、`anchors`、
 `vip_authors` **特意留空**；填写之前运行 `python briefing.py` 会提示 `[SETUP REQUIRED]` 并停止（只有 `--topic`
@@ -483,7 +491,9 @@ switches to `--no-claude` by itself and everything else still works. Add `--no-c
 
 | Path | What it is |
 |---|---|
-| `config.json` | Your settings: pillars, keywords, venues, anchors / 你的配置 |
+| `config.json` | Your settings: pillars, keywords, venues, anchors (not in Git, created from the template) / 你的配置（不在仓库中） |
+| `config.example.json` | The starter template and the defaults for any key your `config.json` lacks / 模板与默认值 |
+| `config_file.py` | Creates `config.json` from the template, merges it over the defaults |
 | `briefing.py` | The command you run / 运行入口 |
 | `fetcher.py`, `topic.py`, `relations.py`, `pins.py` | Collection, scoring, deep-dives, lineage, pinning |
 | `catalog.py`, `html_renderer.py`, `curation.py` | Master table, BibTeX, dashboard, ✅/⭐/🗄️ marks |
@@ -491,6 +501,37 @@ switches to `--no-claude` by itself and everything else still works. Add `--no-c
 | `vpn_checker.py` | Optional campus-VPN check for your own institution (`--require-vpn`, `--fetch-pdf`; set up in `config.json` → `vpn`) |
 | `paper_store.sqlite` | The paper database (not in Git) / 数据库（不在仓库中） |
 | `output/` | Everything generated (not in Git) / 生成的所有文件 |
+
+## Updating / 更新
+
+```bash
+git pull
+```
+
+Your `config.json`, store and `output/` are not in Git, so a pull never touches them. When a new version
+adds a setting to `config.example.json`, the scripts use its default until you set it in your own
+`config.json`. Nested sections merge key by key (your values win); lists, and your keyword, synonym and
+conference maps, are always taken whole from your file.
+`config.json`、数据库和 `output/` 都不在 Git 中，`git pull` 不会改动它们；新版本在 `config.example.json` 中新增的
+设置会以默认值自动生效，你的设置始终优先。
+
+**One-time step for clones from before 2026-11-11** (when `config.json` was still in Git). The pull that
+removes it from Git would otherwise stop with "Your local changes … would be overwritten", or delete your
+file. Save your settings first, then put them back:
+**2026-11-11 之前克隆的仓库需要一次性操作**（当时 `config.json` 还在 Git 中）：先备份，拉取后再恢复。
+
+```bash
+cp config.json config.local.json      # Windows: copy config.json config.local.json
+git checkout -- config.json
+git pull
+cp config.local.json config.json      # Windows: copy config.local.json config.json
+```
+
+`config.local.json` is ignored too; keep it as a backup or delete it. If you had **committed** your
+`config.json`, the pull reports a conflict on it instead; your file is still in the folder, so finish with
+`git rm --cached config.json` and `git commit --no-edit`.
+如果你曾提交过自己的 `config.json`，拉取时会提示冲突；文件仍在目录中，运行 `git rm --cached config.json` 和
+`git commit --no-edit` 即可。
 
 ## Contributing / 参与开发
 
@@ -500,14 +541,17 @@ goes in through a **pull request with one approving review** from the maintainer
 
 - **Collaborators** (write access): push a branch and open a PR, no fork needed.
 - **Everyone else:** fork the repo, push to your fork, and open a PR from there.
+- **Your `config.json` can't end up in a PR:** Git ignores it. A new setting goes into
+  `config.example.json` with a blank or neutral default, and the code should read it with that default.
+  你的 `config.json` 被 Git 忽略，不会进入 PR；新增设置写入 `config.example.json` 并给出空值或中性默认值。
 - **PR audit** (required check, `.github/workflows/pr_audit.yml`): every `.py` file must compile;
-  `config.json` must keep its personal settings blank (`pillars`, keywords, anchors, `data_repo.peer_id`,
-  `paths.data_repo_dir`, VPN and sync hosts…); no `.sqlite` / `.db` / `.env` / key / log file, `output/`
-  or `peers/`, no file over 1 MB; no added line with a personal path (`C:\Users\<name>`), private IP,
-  e-mail address or key-like string. Changes under `.github/` are merged by the maintainer only.
-  Keep your own `config.json` changes out of the PR (`git restore config.json` before committing).
-  PR 审计（必需检查）：代码须能编译；`config.json` 的个人设置须保持为空；不得包含数据库、密钥、日志、
-  个人路径或邮箱。提交前用 `git restore config.json` 撤销你自己的配置修改。
+  `config.example.json` must keep its personal settings blank (`pillars`, keywords, anchors,
+  `data_repo.peer_id`, `paths.data_repo_dir`, VPN and sync hosts…); no `config.json` /
+  `config.local.json` / `.sqlite` / `.db` / `.env` / key / log file, `output/` or `peers/`, no file over
+  1 MB; no added line with a personal path (`C:\Users\<name>`), private IP, e-mail address or key-like
+  string. Changes under `.github/` are merged by the maintainer only.
+  PR 审计（必需检查）：代码须能编译；`config.example.json` 的个人设置须保持为空；不得包含 `config.json`、
+  数据库、密钥、日志、个人路径或邮箱。
 
 ```bash
 git switch -c fix/short-description

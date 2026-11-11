@@ -3,6 +3,10 @@
 *.sqlite*
 *.db
 
+# Your own settings: created from config.example.json on the first run, never committed
+/config.json
+/config.local.json
+
 # Secrets and machine-specific files
 .env
 .env.*

@@ -24,6 +24,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import config_file
 from env_guard import ensure_minisforum_env
 
 ensure_minisforum_env()
@@ -32,7 +33,7 @@ HERE = Path(__file__).resolve().parent
 
 def _load_vpn_cfg():
     try:
-        return json.loads((HERE / "config.json").read_text(encoding="utf-8"))["vpn"]
+        return config_file.load()["vpn"]
     except Exception:
         return {"interface_patterns": ["WireGuard", "Wintun", "TAP-Windows", "OpenVPN"],
                 "campus_networks": [], "campus_route_host": "", "campus_dns": [],

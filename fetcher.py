@@ -33,8 +33,10 @@ IEEE_URL = "https://ieeexploreapi.ieee.org/api/v1/search/articles?"
 
 def load_config():
     import catalog  # here, not at the top: catalog imports this module
+    import config_file
     import paths
-    cfg = paths.resolve(json.loads((HERE / "config.json").read_text(encoding="utf-8")))
+    # config.json over the config.example.json defaults (config.json is created from the template if missing)
+    cfg = paths.resolve(config_file.load())
     catalog.configure(cfg)  # pillar names from config.json
     return cfg
 

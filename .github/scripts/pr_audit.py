@@ -6,9 +6,10 @@ request into main (a required status check in the main ruleset).
 It never imports or runs code from the pull request: files are only compiled (py_compile), parsed (json)
 and read. Checks:
   1. every tracked *.py file compiles;
-  2. config.json is valid JSON and every personal setting still ships blank (pillars, keywords, peer_id,
-     data_repo_dir, ...), so nobody's own config lands in the template;
-  3. no database, secret, log, output or overlay file is added or changed, and no file is over 1 MB;
+  2. config.example.json (the starter template) is valid JSON and every personal setting still ships blank
+     (pillars, keywords, peer_id, data_repo_dir, ...), so nobody's own config lands in the template;
+  3. no config.json / config.local.json (each user's own, git-ignored), database, secret, log, output or
+     overlay file is added or changed, and no file is over 1 MB;
   4. no added line holds a personal path, a private IP address, an e-mail address or a key-like string;
   5. nothing under .github/ changes (the maintainer merges those with the admin bypass).
 Prints ::error annotations and a summary; exits 1 when anything fails.
@@ -23,10 +24,11 @@ import tempfile
 from pathlib import Path
 
 SELF = ".github/scripts/pr_audit.py"
+TEMPLATE = "config.example.json"  # the tracked starter settings; config.json is each user's own (git-ignored)
 MAX_BYTES = 1_000_000
 WINDOW, OVERLAP = 1000, 200  # line scan in overlapping windows (longest pattern is far below OVERLAP)
 
-# Starter settings that must stay exactly like this (path in config.json -> required value).
+# Starter settings that must stay exactly like this in config.example.json (key path -> required value).
 BLANK = {
     ("pillars",): [],
     ("pillar_short",): [],
@@ -50,7 +52,8 @@ BLANK = {
 BLANK_IF_PRESENT = {("data_repo", "data_repo_dir"): ""}
 
 FORBIDDEN_FILE = re.compile(r"""(^|/)(
-      [^/]*\.(sqlite[^/]*|db|db-journal|db-wal|db-shm|key|pem|p12|pfx|log)$
+      config(\.local)?\.json$
+    | [^/]*\.(sqlite[^/]*|db|db-journal|db-wal|db-shm|key|pem|p12|pfx|log)$
     | \.env(\.[^/]*)?$
     | \.radar_token$
     | id_(rsa|ecdsa|ed25519)[^/]*$
@@ -112,13 +115,13 @@ def check_compile(repo):
 
 
 def check_config(repo):
-    path = repo / "config.json"
+    name = TEMPLATE
     try:
-        cfg = json.loads(path.read_text(encoding="utf-8"))
+        cfg = json.loads((repo / name).read_text(encoding="utf-8"))
     except FileNotFoundError:
-        return fail("config.json", "missing from the template")
+        return fail(name, "missing: the starter template must stay in the repo")
     except ValueError as e:
-        return fail("config.json", f"not valid JSON ({e})", "config.json")
+        return fail(name, f"not valid JSON ({e})", name)
 
     def get(keys):
         node = cfg
@@ -134,8 +137,8 @@ def check_config(repo):
             continue
         if got is KeyError or got != want or type(got) is not type(want):
             shown = "missing" if got is KeyError else mask(json.dumps(got, ensure_ascii=False))
-            fail("config.json", f"{'.'.join(keys)} must be {json.dumps(want)} in the starter template, "
-                                f"found {shown}. Keep your own settings out of the pull request", "config.json")
+            fail(name, f"{'.'.join(keys)} must be {json.dumps(want)} in the starter template, found {shown}. "
+                       "Your own settings belong in config.json, which Git ignores", name)
 
 
 def changed_files(repo, base):
@@ -148,7 +151,7 @@ def check_files(repo, files):
         if f.startswith(".github/"):
             fail(".github", "changes to workflows or this audit need the maintainer (admin bypass merge)", f)
         if FORBIDDEN_FILE.search(f):
-            fail("forbidden file", "databases, secrets, logs, output/ and peers/ never go into this repo", f)
+            fail("forbidden file", "config.json, databases, secrets, logs, output/ and peers/ never go into this repo", f)
         p = repo / f
         if p.is_file() and p.stat().st_size > MAX_BYTES:
             fail("file size", f"{p.stat().st_size:,} bytes (limit {MAX_BYTES:,})", f)
@@ -207,7 +210,7 @@ def main():
     n_lines = check_lines(repo, base)
 
     summary = [f"## PR audit: {'❌ ' + str(len(errors)) + ' problem(s)' if errors else '✅ passed'}", "",
-               f"{n_py} Python files compiled, config.json checked, {len(files)} changed files, "
+               f"{n_py} Python files compiled, {TEMPLATE} checked, {len(files)} changed files, "
                f"{n_lines} added lines scanned.", ""]
     if errors:
         summary += ["| Check | File | Problem |", "|---|---|---|"]

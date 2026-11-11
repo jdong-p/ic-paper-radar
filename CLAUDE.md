@@ -6,12 +6,23 @@ Instructions for an AI agent (Claude Code) opened in this folder:
   and rules, and edit **only** these keys of `config.json`: `pillars`, `pillar_short` (optional 1–2 word labels, same order), `positive_keywords`,
   `negative_keywords`, `negative_override`, `anchors`, `vip_authors`, `beyond_ieee.key1_themes`
   (and `contact_email` if the user gives one). Keep the file valid JSON.
-- Then run `python briefing.py --rescore` and `python briefing.py --seed-pillars 5 --no-claude`
+- `config.json` is the user's own file and Git ignores it. Any command creates it from the tracked template
+  `config.example.json` when missing (or `cp config.example.json config.json`). The scripts lay it over the
+  template, so keys it lacks take the template's defaults. Put the user's settings only in `config.json`;
+  never write them into `config.example.json`, which must stay the blank starter template.
+- If `git pull` stops with "Your local changes to the following files would be overwritten: config.json",
+  or reports a conflict on `config.json`, the clone predates the template (README.md, "Updating"). Follow
+  that one-time recipe: back the file up to `config.local.json` **first**. Never run `git checkout`,
+  `git restore`, `git reset --hard` or `git stash drop` on `config.json` before that backup exists: it
+  holds the user's pillars and keywords. A `modify/delete` conflict on `config.json` (after a merge or a
+  `git stash pop`) leaves the user's file in the folder: `git rm --cached config.json` keeps it and resolves
+  the conflict (then `git commit --no-edit` for a merge).
+- After configuring, run `python briefing.py --rescore` and `python briefing.py --seed-pillars 5 --no-claude`
   (`python3` on macOS) and report how many papers each pillar got. If a pillar gets 0–1 papers,
   propose broader keywords; if one pillar dominates, lower its generic weights.
 - Each pillar is kept at `catch_up.min_candidates_per_pillar` (10) unreviewed papers and refilled after
   every mark, `--sync` and daily run (README.md, "Catch-up"). If the user wants more now, run
-  `python briefing.py --seed-pillars N` with N above 10. Keep `catch_up.not_a_paper` in `config.json`: it
+  `python briefing.py --seed-pillars N` with N above 10. Keep `catch_up.not_a_paper` in the config: it
   skips tutorials and forums.
 - Marks and 🏷️ Tech notes typed in `output/DASHBOARD.html` reach the database only after the user clicks
   💾 Save Marks and runs `python briefing.py --sync` (README.md, "Curation"). To set a note yourself, put it
@@ -27,11 +38,12 @@ Instructions for an AI agent (Claude Code) opened in this folder:
   pushes (README.md, "Contributing"). Work on a new branch, push it, and open a PR with
   `gh pr create --base main`; never push to `main` or force-push. Commit and push only when the user asks.
   The shared corpus repo used by `--sync-data-repo` is separate and unaffected.
-- The required **PR audit** check fails a PR that changes the user's personal settings in `config.json`
-  (pillars, keywords, `peer_id`, `data_repo_dir`, ...), adds a `.sqlite`/`.db`/`.env`/log file, `output/` or
-  `peers/`, a personal path, IP, e-mail or key, or touches `.github/`. So never stage `config.json` with
-  the user's own settings: commit only the files the change needs (`git add <file>`, not `git add -A`), and
-  `git restore --staged config.json` if it slipped in. Don't edit `.github/` to make the audit pass.
+- The required **PR audit** check fails a PR that fills a personal setting in `config.example.json`
+  (pillars, keywords, `peer_id`, `data_repo_dir`, ...), adds `config.json`, `config.local.json`, a
+  `.sqlite`/`.db`/`.env`/log file, `output/` or `peers/`, a personal path, IP, e-mail or key, or touches
+  `.github/`. Never `git add -f` an ignored file; commit only the files the change needs. A change that
+  needs a new setting adds it to `config.example.json` with a blank or neutral default. Don't edit
+  `.github/` to make the audit pass.
 - Reports and digests are written in English.
 - If `paper_store.sqlite` is missing or empty, say so: the user can request the pre-built database from
   the author (README.md, Step 1) or build one with weekly runs and `--topic` dives.

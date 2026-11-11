@@ -5,17 +5,15 @@ write everything to ./output (see paths.py). If you dedicate one machine to the 
 "portable_mode": false and "host_lock": "<that machine's hostname>" in config.json: the scripts then
 refuse to run anywhere else (useful when the folder is synced to several computers).
 """
-import json
 import socket
 import sys
-from pathlib import Path
 
-HERE = Path(__file__).resolve().parent
+import config_file
 
 
 def _config():
     try:
-        return json.loads((HERE / "config.json").read_text(encoding="utf-8"))
+        return config_file.load()  # also creates config.json from config.example.json on the first run
     except Exception:
         return {}
 
