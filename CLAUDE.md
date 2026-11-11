@@ -27,6 +27,11 @@ Instructions for an AI agent (Claude Code) opened in this folder:
   pushes (README.md, "Contributing"). Work on a new branch, push it, and open a PR with
   `gh pr create --base main`; never push to `main` or force-push. Commit and push only when the user asks.
   The shared corpus repo used by `--sync-data-repo` is separate and unaffected.
+- The required **PR audit** check fails a PR that changes the user's personal settings in `config.json`
+  (pillars, keywords, `peer_id`, `data_repo_dir`, ...), adds a `.sqlite`/`.db`/`.env`/log file, `output/` or
+  `peers/`, a personal path, IP, e-mail or key, or touches `.github/`. So never stage `config.json` with
+  the user's own settings: commit only the files the change needs (`git add <file>`, not `git add -A`), and
+  `git restore --staged config.json` if it slipped in. Don't edit `.github/` to make the audit pass.
 - Reports and digests are written in English.
 - If `paper_store.sqlite` is missing or empty, say so: the user can request the pre-built database from
   the author (README.md, Step 1) or build one with weekly runs and `--topic` dives.

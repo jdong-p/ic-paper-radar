@@ -17,16 +17,19 @@ file, so nobody ever merges it in Git:
   4. git commit + git push only if something is new for the remote: the shared file gives it something it lacks
      (new DOIs, objective fields it has empty, higher citation counts) or this radar's overlay changed;
      otherwise the remote files are restored, so two radars whose exports differ only in bytes never trade
-     commits. A rejected push (someone pushed meanwhile) goes back to step 1 once more
+     commits. A rejected push (someone pushed meanwhile) waits a random 2–5 s and goes back to step 1, up to
+     PUSH_RETRIES (3) times, so up to 5 radars syncing in the same minute serialize instead of failing
 A reset can't lose anything: the remote's papers come in at step 2, this radar's own are in its store and
 go out at step 3. After both collaborators have run it, both stores hold the same union of DOIs.
 """
 import getpass
 import json
+import random
 import re
 import shutil
 import sqlite3
 import subprocess
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -40,6 +43,8 @@ HERE = Path(__file__).resolve().parent
 DB_NAME = "paper_store_clean_share.sqlite"
 PEERS_DIR = "peers"
 REMOTE_MARK = "ic-paper-radar-data"  # origin must contain this before anything is reset
+PUSH_RETRIES = 3          # fresh rounds after a rejected push (another radar pushed first)
+PUSH_BACKOFF = (2.0, 5.0)  # random wait in seconds before each retry, so colliding radars spread out
 
 
 def repo_dir(cfg):
@@ -210,7 +215,8 @@ def _round(store, store_path, cfg, repo, me, adopt, secrets, push, log):
 
 
 def sync(store, store_path, cfg, adopt=None, secrets=(), push=True, log=print):
-    """Steps 1–4 (see the module docstring), with one retry from step 1 after a rejected push.
+    """Steps 1–4 (see the module docstring); after a rejected push, a random PUSH_BACKOFF wait and a fresh
+    round from step 1, up to PUSH_RETRIES times. The jitter keeps radars that collided from colliding again.
     Returns {'papers': n, 'peers': {peer_id: rows}}; raises RuntimeError on any failure."""
     repo = repo_dir(cfg)
     why = check_clone(repo)
@@ -218,10 +224,13 @@ def sync(store, store_path, cfg, adopt=None, secrets=(), push=True, log=print):
         raise RuntimeError(why)
     me = peer_id(cfg, repo)
     log(f"Shared corpus: {repo} (this radar: {me})")
-    for attempt in (1, 2):
+    attempts = 1 + PUSH_RETRIES
+    for attempt in range(1, attempts + 1):
         done, n, peers = _round(store, store_path, cfg, repo, me, adopt, secrets, push, log)
         if done:
             return {"papers": n, "peers": peers}
-        if attempt == 1:
-            log("  retrying once from step 1")
-    raise RuntimeError("push rejected twice; run --sync-data-repo again later")
+        if attempt < attempts:
+            wait = random.uniform(*PUSH_BACKOFF)
+            log(f"  retry {attempt}/{PUSH_RETRIES} from step 1 in {wait:.1f} s")
+            time.sleep(wait)
+    raise RuntimeError(f"push rejected {attempts} times; run --sync-data-repo again later")

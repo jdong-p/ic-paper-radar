@@ -1,0 +1,47 @@
+name: PR audit
+
+# Gatekeeper for every pull request into main; "PR audit" is a required status check in the main ruleset.
+# pull_request_target: this workflow and .github/scripts/pr_audit.py always come from main, so a pull
+# request can't weaken its own check. That is safe here because nothing from the pull request is run:
+# its files are only compiled (py_compile), parsed (json) and read, Python runs isolated (-I), the token
+# is read-only and no secrets are used. Keep it that way: never run a pull request's code in this job.
+on:
+  pull_request_target:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-audit-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    name: PR audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out the audit script (from main)
+        uses: actions/checkout@v4
+        with:
+          path: base
+          persist-credentials: false
+
+      - name: Check out the pull request (read only, never run)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: pr
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Audit
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: python -I base/.github/scripts/pr_audit.py pr "$BASE_SHA"

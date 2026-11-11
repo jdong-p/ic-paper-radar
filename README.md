@@ -387,7 +387,8 @@ python briefing.py --sync-data-repo
 3. Your store is exported, cleaned, back over the shared file: every paper, the merged ones included.
 4. It commits and pushes **only if** the remote gains something (new papers, missing abstracts or
    references, higher citation counts), so two radars never trade empty commits. If someone pushed in the
-   meantime, it starts once more from step 1.
+   meantime, it waits a random 2–5 s and starts again from step 1 (up to 3 times), so several radars
+   syncing in the same minute take turns instead of failing.
 
 It also runs after every Friday finalize when the clone exists (`"friday_sync": false` turns that off).
 After both of you have run it, both stores hold the same union of papers.
@@ -499,6 +500,14 @@ goes in through a **pull request with one approving review** from the maintainer
 
 - **Collaborators** (write access): push a branch and open a PR, no fork needed.
 - **Everyone else:** fork the repo, push to your fork, and open a PR from there.
+- **PR audit** (required check, `.github/workflows/pr_audit.yml`): every `.py` file must compile;
+  `config.json` must keep its personal settings blank (`pillars`, keywords, anchors, `data_repo.peer_id`,
+  `paths.data_repo_dir`, VPN and sync hosts…); no `.sqlite` / `.db` / `.env` / key / log file, `output/`
+  or `peers/`, no file over 1 MB; no added line with a personal path (`C:\Users\<name>`), private IP,
+  e-mail address or key-like string. Changes under `.github/` are merged by the maintainer only.
+  Keep your own `config.json` changes out of the PR (`git restore config.json` before committing).
+  PR 审计（必需检查）：代码须能编译；`config.json` 的个人设置须保持为空；不得包含数据库、密钥、日志、
+  个人路径或邮箱。提交前用 `git restore config.json` 撤销你自己的配置修改。
 
 ```bash
 git switch -c fix/short-description
