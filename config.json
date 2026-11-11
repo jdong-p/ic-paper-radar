@@ -5,7 +5,7 @@
   "dashboard_corpus": true,
   "contact_email": "",
 
-  "pillars": ["Test pillar"],
+  "pillars": [],
   "_pillar_short_note": "Optional, same order as pillars: a 1-2 word label per pillar for phones and the Pillar column, shown as 'P1 · <label>'. Leave empty to derive it from the pillar name.",
   "pillar_short": [],
 
