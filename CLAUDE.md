@@ -23,6 +23,10 @@ Instructions for an AI agent (Claude Code) opened in this folder:
   else's store, use `--merge-store OTHER.sqlite` (never copy it over `paper_store.sqlite`).
 - Don't edit the `*.py` files unless the user asks. Never put API keys in `config.json`; the IEEE key
   goes in the `IEEE_API_KEY` environment variable.
+- Code changes to this repo go through a pull request: `main` on GitHub is protected and rejects direct
+  pushes (README.md, "Contributing"). Work on a new branch, push it, and open a PR with
+  `gh pr create --base main`; never push to `main` or force-push. Commit and push only when the user asks.
+  The shared corpus repo used by `--sync-data-repo` is separate and unaffected.
 - Reports and digests are written in English.
 - If `paper_store.sqlite` is missing or empty, say so: the user can request the pre-built database from
   the author (README.md, Step 1) or build one with weekly runs and `--topic` dives.

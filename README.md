@@ -491,6 +491,29 @@ switches to `--no-claude` by itself and everything else still works. Add `--no-c
 | `paper_store.sqlite` | The paper database (not in Git) / 数据库（不在仓库中） |
 | `output/` | Everything generated (not in Git) / 生成的所有文件 |
 
+## Contributing / 参与开发
+
+`main` is protected: nobody pushes to it directly, and it can't be force-pushed or deleted. Every change
+goes in through a **pull request with one approving review** from the maintainer.
+`main` 分支受保护：不能直接推送、强制推送或删除；所有修改都通过 Pull Request，经维护者批准一次后合并。
+
+- **Collaborators** (write access): push a branch and open a PR, no fork needed.
+- **Everyone else:** fork the repo, push to your fork, and open a PR from there.
+
+```bash
+git switch -c fix/short-description
+git commit -am "Describe the change"
+git push -u origin fix/short-description
+gh pr create --base main --fill        # or open the PR on github.com
+```
+
+Using Claude Code? Ask it to work on a new branch and open a PR; it won't be able to push to `main`.
+After the merge, `git switch main && git pull` before starting the next branch.
+使用 Claude Code 时，让它在新分支上修改并创建 PR；合并后先 `git pull` 再开始下一个分支。
+
+The shared corpus (`--sync-data-repo`) lives in a separate repo and isn't affected by this rule.
+共享论文库（`--sync-data-repo`）在另一个仓库中，不受此规则影响。
+
 ## Notes / 说明
 
 - **No PDFs:** digests and scores use titles and abstracts only. Read the paper before citing its numbers.
