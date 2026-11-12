@@ -142,11 +142,12 @@ def import_peers(store, repo, me, log=print):
 def write_overlay(store, cfg, repo, me, secrets=()):
     """This radar's overlay → peers/<me>.json. Rewritten only when its content changed ('updated' is the time of
     that change), and refused if any text holds a local path or a secret. Returns (changed, rows)."""
-    import catalog  # here: catalog imports modules that import this one
+    import arxiv_source, catalog  # here: catalog imports modules that import this one
     dr = cfg.get("data_repo") or {}
     kwmap = catalog._kw_pillars(cfg)
     ov = store_mod.peer_overlay(store, me, [catalog.PILLARS[k] for k in sorted(catalog.PILLARS) if k],
-                                lambda p: catalog.pillar_of(p, kwmap), share_notes=dr.get("share_notes", True))
+                                lambda p: catalog.pillar_of(p, kwmap), share_notes=dr.get("share_notes", True),
+                                skip_arxiv=arxiv_source.share_skip(cfg))
     text = json.dumps(ov, ensure_ascii=False, sort_keys=True)
     hit = store_mod.FORBIDDEN.search(text) or next((x for x in secrets if x and x in text), None)
     if hit:
@@ -179,7 +180,8 @@ def _round(store, store_path, cfg, repo, me, adopt, secrets, push, log):
         if adopt and (cfg.get("data_repo") or {}).get("adopt_external", True):
             msg += f", {adopt(store, cfg)} adopted into the archive (≥ min_score)"
         log(msg)
-    s = store_mod.export_clean_share_db(store_path, db, secrets=secrets)
+    import arxiv_source  # here, like catalog above
+    s = store_mod.export_clean_share_db(store_path, db, secrets=secrets, skip_arxiv=arxiv_source.share_skip(cfg))
     if s["papers"] < before:
         _git(repo, "checkout", "--", DB_NAME, check=False)
         raise RuntimeError(f"export has {s['papers']} papers, fewer than the remote's {before}: nothing pushed")

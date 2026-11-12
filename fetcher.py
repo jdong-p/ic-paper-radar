@@ -647,6 +647,14 @@ def collect(cfg, store, today, log=print, backfill=True):
         st["new"] += new
         log(f"  {v['short']:<8} {len(got):>4} records, {new} new")
 
+    import arxiv_source  # here, not at the top: arxiv_source imports this module
+    if arxiv_source.enabled(cfg):
+        got = arxiv_source.weekly(cfg, store, since, log)
+        new = sum(store.upsert({**p, "first_seen": today.isoformat()}, "pending") for p in got)
+        st["per_venue"]["arXiv"] = (len(got), new)
+        st["new"] += new
+        log(f"  {'arXiv':<8} {len(got):>4} records, {new} new")
+
     # per-DOI IEEE lookups for papers still missing an abstract (title matches first)
     pend = [p for p in store.where("status IN ('pending','candidate') AND (abstract IS NULL OR abstract='') "
                                    "AND doi LIKE '10.1109/%'")]

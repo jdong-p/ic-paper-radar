@@ -31,6 +31,20 @@
     "backfill_chunk_days": 31,
     "abstract_give_up_days": 14,
 
+    "arxiv": {
+        "_note": "Optional narrow arXiv feed via the official API (arxiv_source.py). enabled: the weekly run runs each raw arXiv search_query in queries (e.g. 'abs:\"analog circuit\" AND abs:\"reinforcement learning\"'), newest first, up to max_pages pages of max_results, and keeps only papers whose title or abstract has a term of every group in must_all (e.g. [[AI terms], [circuit terms]]) and none of exclude_any; the rest is dropped, not stored. categories: arXiv categories to search in (e.g. 'cs.AR'); empty = all. pillar: the pillar number kept papers are filed under (0 = the usual keyword guess). --topic adds an arXiv stage only for a topic that matches every must_all group. share: include them in --export-share / --sync-data-repo (selected or cited ones always are). arXiv allows one request every 3 s (min_interval_s, never below 3).",
+        "enabled": false,
+        "queries": [],
+        "categories": [],
+        "must_all": [],
+        "exclude_any": [],
+        "pillar": 0,
+        "max_results": 50,
+        "max_pages": 4,
+        "share": false,
+        "min_interval_s": 3
+    },
+
     "topic": {
         "ieee_topic_reserve": 30,
         "default_max_ieee": 25,
