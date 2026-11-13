@@ -147,6 +147,9 @@ PERSONAL_RESET = ("status='archive', week=NULL, catchup=NULL, user_mark='normal'
                   "user_note=NULL, pin=NULL, pillar=NULL, score=0, hits=NULL")
 PILLAR_LINE = re.compile(r"^\s*-\s*\*\*Pillar:\*\*.*\n?", re.M)  # a digest's pillar names this radar's pillars
 FORBIDDEN = re.compile(r"(?i)[A-Z]:\\Users\\|/Users/[^/\s]+/|/home/[^/\s]+/|radar_token")  # local user paths, the sync token file
+# this radar's own arXiv preprints that the user has not selected or cited (left out of what it shares)
+ARXIV_PRIVATE = ("doi LIKE '10.48550/arxiv.%' AND status != 'external' AND COALESCE(user_mark,'normal') != 'selected' "
+                 "AND COALESCE(cited,0)=0")
 # objective fields a merge may fill in when empty here (never curation, scores or this radar's weekly state)
 OBJECTIVE = ("title", "authors", "venue", "venue_name", "published", "abstract", "source", "article_number",
              "index_terms", "refs", "oa_id", "keyrefs", "related", "lineage", "grp")
@@ -156,16 +159,28 @@ def _strip_pillar(digest):
     return PILLAR_LINE.sub("", digest) if digest else digest
 
 
-def export_clean_share_db(src_db_path, dst_db_path, include_curation=False, secrets=()):
+def export_clean_share_db(src_db_path, dst_db_path, include_curation=False, secrets=(), skip_arxiv=False):
     """The share database, from a read-only copy of src (SQLite backup API, safe while the radar runs):
     every row reset to an unmarked 'archive' paper (PERSONAL_RESET), digests without their **Pillar:** line,
     meta / api_usage / peer_curation emptied, VACUUM. Checked before it replaces dst (atomically, via .tmp):
     no personal column set, no Pillar line, empty meta, and no FORBIDDEN string or any of `secrets` (e.g. the
     sync token) in any text. include_curation=True keeps marks, notes, pillars, scores and meta (for a
-    collaborator who should see them); the text check still runs. Returns {papers, digests, abstracts, bytes}."""
+    collaborator who should see them); the text check still runs. skip_arxiv=True leaves out this radar's own
+    arXiv preprints unless selected or cited (arxiv_source.share_skip), but never one whose DOI the existing dst
+    already has (a peer's shared preprint, adopted or found here too), so the export never shrinks below it.
+    Returns {papers, digests, abstracts, bytes}."""
     dst = Path(dst_db_path)
     tmp = dst.with_name(dst.name + ".tmp")
     tmp.unlink(missing_ok=True)
+    shared = []  # arXiv DOIs the existing share file already has: kept by skip_arxiv
+    if skip_arxiv and dst.exists():
+        old = sqlite3.connect(f"file:{dst.as_posix()}?mode=ro", uri=True)
+        try:
+            shared = [(r[0],) for r in old.execute("SELECT doi FROM papers WHERE doi LIKE '10.48550/arxiv.%'")]
+        except sqlite3.Error:
+            pass
+        finally:
+            old.close()
     src = sqlite3.connect(f"file:{Path(src_db_path).as_posix()}?mode=ro", uri=True)
     try:
         out = sqlite3.connect(tmp)
@@ -178,6 +193,10 @@ def export_clean_share_db(src_db_path, dst_db_path, include_curation=False, secr
         db = s.db
         db.execute("DELETE FROM api_usage")
         db.execute("DELETE FROM peer_curation")
+        if skip_arxiv:
+            db.execute("CREATE TEMP TABLE shared (doi TEXT PRIMARY KEY)")
+            db.executemany("INSERT OR IGNORE INTO shared VALUES (?)", shared)
+            db.execute(f"DELETE FROM papers WHERE {ARXIV_PRIVATE} AND doi NOT IN (SELECT doi FROM shared)")
         if not include_curation:
             db.execute(f"UPDATE papers SET {PERSONAL_RESET}")
             for doi, d in db.execute("SELECT doi, digest FROM papers WHERE digest LIKE '%**Pillar:**%'").fetchall():
@@ -284,13 +303,14 @@ OVERLAY_SQL = ("COALESCE(user_mark,'normal') != 'normal' OR cited = 1 OR COALESC
                "OR pillar IS NOT NULL OR score > 0")
 
 
-def peer_overlay(store, peer_id, pillars, pillar_of, share_notes=True):
+def peer_overlay(store, peer_id, pillars, pillar_of, share_notes=True, skip_arxiv=False):
     """This radar's curation as a JSON-ready overlay for collaborators (peers/<peer_id>.json in the shared
     repo): its pillar names, and per DOI with any curation (a mark, ⭐, a note, a chosen pillar or a score > 0)
     the pillar (`pillar_of(row)`, the same rule the dashboard uses), score, stage, ⭐, Si call, note and status.
-    Defaults are left out to keep the file small. share_notes=False keeps the 🏷️ notes private."""
+    Defaults are left out to keep the file small. share_notes=False keeps the 🏷️ notes private.
+    skip_arxiv=True leaves out arXiv preprints the user has not selected or cited."""
     rows = {}
-    for p in store.where(OVERLAY_SQL):
+    for p in store.where(f"({OVERLAY_SQL}) AND NOT ({ARXIV_PRIVATE})" if skip_arxiv else OVERLAY_SQL):
         r = {"status": p.get("status")}
         k = 0 if p.get("grp") == "beyond" else pillar_of(p)
         if k:

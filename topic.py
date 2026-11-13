@@ -18,6 +18,7 @@ from datetime import date
 from env_guard import ensure_minisforum_env
 
 ensure_minisforum_env()
+import arxiv_source
 import curation
 import fetcher
 import relations
@@ -267,6 +268,9 @@ def run(query, cfg, store, max_ieee, claude, log=print, use_claude=True):
     log(f"  local store: {len(found)} relevant")
     for d, p in openalex_search(groups, cfg, log).items():
         found.setdefault(d, p)
+    if arxiv_source.enabled(cfg):  # preprints from arXiv's official API (config "arxiv")
+        for d, p in arxiv_source.topic_search(groups, cfg, store, log).items():
+            found.setdefault(d, p)
 
     # Stage B — IEEE reserve (skipped without IEEE_API_KEY: OpenAlex results only)
     fetcher.ieee_notice(log)

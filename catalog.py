@@ -272,6 +272,14 @@ def _bib_author(name):
 
 
 def bib_entry(p, key):
+    if p["doi"].startswith("10.48550/arxiv."):  # an arXiv preprint (also when added by --add): @misc, eprint fields
+        aid = p["doi"].split("arxiv.", 1)[-1]
+        fields = [("title", "{" + _tex(fetcher.tidy_tex(p["title"])) + "}"),
+                  ("author", " and ".join(_tex(_bib_author(a)) for a in p.get("authors") or [] if a)),
+                  ("howpublished", f"arXiv:{aid}"), ("year", str(_year(p))), ("eprint", aid), ("archivePrefix", "arXiv"),
+                  ("primaryClass", (p.get("venue_name") or "").removeprefix("arXiv").strip(" ()")),
+                  ("doi", p["doi"]), ("url", f"https://arxiv.org/abs/{aid}")]
+        return f"@misc{{{key},\n" + ",\n".join(f"  {k} = {{{v}}}" for k, v in fields if v) + "\n}"
     conf = bool(CONF_RX.search(p.get("venue_name") or "")) or p["venue"] in ("ISSCC", "CICC", "VLSI", "ESSERC")
     fields = [("title", "{" + _tex(fetcher.tidy_tex(p["title"])) + "}"),  # double braces keep capitals (CMOS, ADC)
               ("author", " and ".join(_tex(_bib_author(a)) for a in p.get("authors") or [] if a)),

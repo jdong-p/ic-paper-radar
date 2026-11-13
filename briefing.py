@@ -41,6 +41,7 @@ from env_guard import ensure_minisforum_env
 
 ensure_minisforum_env()
 
+import arxiv_source
 import catalog
 import curation
 import data_repo
@@ -408,7 +409,8 @@ def export_share(store_path, cfg, dst=None, include_curation=False, log=print):
     database stays."""
     dst = Path(dst or cfg["paths"].get("share_db") or Path(cfg["paths"]["onedrive_root"]) / "paper_store_clean_share.sqlite").expanduser()
     try:
-        s = store_mod.export_clean_share_db(store_path, dst, include_curation, secrets=(curation.sync_token(),))
+        s = store_mod.export_clean_share_db(store_path, dst, include_curation, secrets=(curation.sync_token(),),
+                                            skip_arxiv=arxiv_source.share_skip(cfg))
         log(f"Share database: {dst} ({s['papers']} papers, {s['abstracts']} abstracts, {s['digests']} digests, "
             f"{s['bytes'] / 1e6:.1f} MB{', with curation' if include_curation else ''})")
     except Exception as e:
