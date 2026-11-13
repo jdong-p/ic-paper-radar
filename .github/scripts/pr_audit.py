@@ -47,6 +47,14 @@ BLANK = {
     ("vpn", "campus_route_host"): "",
     ("vpn", "campus_dns"): [],
     ("sync_server", "hosts"): [],
+    # optional arXiv feed (arxiv_source.py): off, with no personal queries or filters
+    ("arxiv", "enabled"): False,
+    ("arxiv", "queries"): [],
+    ("arxiv", "categories"): [],
+    ("arxiv", "must_all"): [],
+    ("arxiv", "exclude_any"): [],
+    ("arxiv", "pillar"): 0,
+    ("arxiv", "share"): False,
 }
 # Blank when present (not shipped today, but a natural place for a personal value).
 BLANK_IF_PRESENT = {("data_repo", "data_repo_dir"): ""}
