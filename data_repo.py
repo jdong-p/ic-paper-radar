@@ -91,28 +91,32 @@ def _count(db):
 
 
 def _snapshot(db):
-    """{doi: (filled objective fields + digest, cited_by, ieee_cites)} of a share file, for _gain()."""
+    """{doi: (filled fields, cited_by, ieee_cites, first_seen)} of a share file, for _gain(). A field counts as
+    filled unless it is NULL, '', '[]' or 'null' (store.EMPTY), so those four are the same thing here."""
     if not db.exists():
         return {}
-    cols = [c for c in (*store_mod.OBJECTIVE, "digest")]
+    cols = [c for c in (*store_mod.OBJECTIVE, *store_mod.BOOKKEEPING, "digest")]
     c = sqlite3.connect(f"file:{db.as_posix()}?mode=ro", uri=True)
     try:
         have = {r[1] for r in c.execute("PRAGMA table_info(papers)")}
         cols = [x for x in cols if x in have]
         out = {}
-        for r in c.execute(f"SELECT doi, cited_by, ieee_cites, {', '.join(cols)} FROM papers"):
-            out[str(r[0]).lower()] = ({k for k, v in zip(cols, r[3:]) if v not in (None, "", "[]")}, r[1] or 0, r[2] or 0)
+        for r in c.execute(f"SELECT doi, cited_by, ieee_cites, first_seen, {', '.join(cols)} FROM papers"):
+            out[str(r[0]).lower()] = ({k for k, v in zip(cols, r[4:]) if v not in store_mod.EMPTY},
+                                      r[1] or 0, r[2] or 0, r[3] or "")
         return out
     finally:
         c.close()
 
 
 def _gain(remote, new):
-    """What the new export gives the remote: (new DOIs, rows with more filled fields or higher citations).
-    Only a real gain is pushed, so two radars whose files differ only in bytes don't trade commits forever."""
+    """What the new export gives the remote: (new DOIs, rows with more filled fields, higher citations or an
+    earlier first_seen). Only a real gain is pushed, so two radars whose files differ only in bytes (or in
+    how they write an empty field) don't trade commits forever."""
     added = sum(1 for d in new if d not in remote)
-    better = sum(1 for d, (f, c1, c2) in new.items() if d in remote
-                 and (f - remote[d][0] or c1 > remote[d][1] or c2 > remote[d][2]))
+    better = sum(1 for d, (f, c1, c2, fs) in new.items() if d in remote
+                 and (f - remote[d][0] or c1 > remote[d][1] or c2 > remote[d][2]
+                      or (fs and (not remote[d][3] or fs < remote[d][3]))))
     return added, better
 
 

@@ -153,6 +153,19 @@ ARXIV_PRIVATE = ("doi LIKE '10.48550/arxiv.%' AND status != 'external' AND COALE
 # objective fields a merge may fill in when empty here (never curation, scores or this radar's weekly state)
 OBJECTIVE = ("title", "authors", "venue", "venue_name", "published", "abstract", "source", "article_number",
              "index_terms", "refs", "oa_id", "keyrefs", "related", "lineage", "grp")
+# bookkeeping a merge fills when empty here too: the date of the last lineage search (relations.py), so a
+# collaborator does not repeat a search someone else already did
+BOOKKEEPING = ("lineage_checked",)
+# "nothing here" in a stored value; the share file keeps it as NULL, whichever radar wrote it
+EMPTY = (None, "", "[]", "null")
+EMPTY_TO_NULL = ("authors", "index_terms", "refs", "keyrefs", "related", "lineage", "abstract", "digest", "oa_id")
+SETTLED = ("archive", "external")  # a merge may only move first_seen earlier on these (not on pending / skipped)
+ISO_DAY = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def _first_seen(value, today):
+    """A first_seen worth taking over from another store: an ISO day, never later than today."""
+    return value if isinstance(value, str) and ISO_DAY.match(value) and value <= today else None
 
 
 def _strip_pillar(digest):
@@ -202,6 +215,8 @@ def export_clean_share_db(src_db_path, dst_db_path, include_curation=False, secr
             for doi, d in db.execute("SELECT doi, digest FROM papers WHERE digest LIKE '%**Pillar:**%'").fetchall():
                 db.execute("UPDATE papers SET digest=? WHERE doi=?", (_strip_pillar(d), doi))
             db.execute("DELETE FROM meta")
+        for c in EMPTY_TO_NULL:  # one canonical empty (NULL), so radars that stored '[]' or '' export the same file
+            db.execute(f"UPDATE papers SET {c}=NULL WHERE {c} IS NOT NULL AND TRIM({c}) IN ('', '[]', 'null')")
         db.commit()
         db.execute("VACUUM")
         problems = []
@@ -240,18 +255,20 @@ def export_clean_share_db(src_db_path, dst_db_path, include_curation=False, secr
 
 def merge_store(store, other_db_path, peer=None, log=print):
     """Bring another researcher's store into this one, one row per DOI (no duplicates):
-    - a DOI already here: only empty objective fields (OBJECTIVE) are filled, the larger citation counts are
-      kept, and a missing digest is taken without its **Pillar:** line. Curation, scores, pillars, notes and
-      the weekly state here are never touched;
-    - a new DOI: inserted as status 'external' (unmarked, score 0): searchable by --topic / --recall and used
-      for relations, but never pulled into this radar's pillars (pillar_replenish reads 'archive') or board;
+    - a DOI already here: only empty objective fields (OBJECTIVE) and an empty lineage_checked are filled, the
+      larger citation counts are kept, and a missing digest is taken without its **Pillar:** line. first_seen
+      only ever moves earlier (the other store saw it first), and only on 'archive' / 'external' rows.
+      Curation, scores, pillars, notes and the weekly state here are never touched;
+    - a new DOI: inserted as status 'external' (unmarked, score 0) with the other store's first_seen and
+      lineage_checked: searchable by --topic / --recall and used for relations, but never pulled into this
+      radar's pillars (pillar_replenish reads 'archive') or board;
     - with peer: the other store's own curation (marks, ⭐, notes, chosen pillars) is kept in peer_curation
       under that name (dormant: nothing shows it yet). Without peer it is ignored.
     The other file is opened read-only. Returns {'new', 'enriched', 'unchanged', 'peer_rows'}."""
     other = sqlite3.connect(f"file:{Path(other_db_path).as_posix()}?mode=ro", uri=True)
     other.row_factory = sqlite3.Row
     have = {r[1] for r in other.execute("PRAGMA table_info(papers)")}
-    stats = {"new": 0, "enriched": 0, "unchanged": 0, "peer_rows": 0}
+    stats = {"new": 0, "enriched": 0, "unchanged": 0, "peer_rows": 0, "earlier": 0}  # earlier: first_seen moved back
     today = date.today().isoformat()
     try:
         for r in other.execute("SELECT * FROM papers"):
@@ -262,14 +279,19 @@ def merge_store(store, other_db_path, peer=None, log=print):
             mine = store.get(doi)
             digest = _strip_pillar(o.get("digest"))
             if mine is None:
-                row = {k: o.get(k) for k in OBJECTIVE if o.get(k)}
-                row.update({"status": "external", "first_seen": today, "cited_by": o.get("cited_by"),
+                row = {k: o.get(k) for k in (*OBJECTIVE, *BOOKKEEPING) if o.get(k)}
+                row.update({"status": "external", "first_seen": _first_seen(o.get("first_seen"), today) or today,
+                            "cited_by": o.get("cited_by"),
                             "ieee_cites": o.get("ieee_cites"), "digest": digest or None,
                             "digest_ver": o.get("digest_ver") if digest else None})
                 store.update(doi, row, insert=True)
                 stats["new"] += 1
             else:
-                fill = {k: o[k] for k in OBJECTIVE if o.get(k) and not mine.get(k)}
+                fill = {k: o[k] for k in (*OBJECTIVE, *BOOKKEEPING) if o.get(k) and not mine.get(k)}
+                theirs, here = _first_seen(o.get("first_seen"), today), _first_seen(mine.get("first_seen"), today)
+                if theirs and (not here or (theirs < here and mine.get("status") in SETTLED)):
+                    fill["first_seen"] = theirs
+                    stats["earlier"] += 1
                 for k in ("cited_by", "ieee_cites"):
                     if (o.get(k) or 0) > (mine.get(k) or 0):
                         fill[k] = o[k]
@@ -277,7 +299,7 @@ def merge_store(store, other_db_path, peer=None, log=print):
                     fill.update(digest=digest, digest_ver=o.get("digest_ver"))
                 if fill:
                     store.update(doi, fill)
-                stats["enriched" if fill else "unchanged"] += 1
+                stats["enriched" if set(fill) - {"first_seen"} else "unchanged"] += 1  # an earlier date alone isn't news
             if peer:
                 cur = {k: o.get(k) if k in have else None
                        for k in ("user_mark", "cited", "user_note", "pillar", "score", "status", "user_silicon")}
@@ -290,7 +312,8 @@ def merge_store(store, other_db_path, peer=None, log=print):
     finally:
         other.close()
     log(f"Merge {Path(other_db_path).name}: {stats['new']} new (status 'external'), {stats['enriched']} enriched, "
-        f"{stats['unchanged']} unchanged" + (f", {stats['peer_rows']} curation rows kept for peer '{peer}'" if peer else ""))
+        f"{stats['unchanged']} unchanged" + (f", {stats['earlier']} first-seen dates moved earlier" if stats["earlier"] else "")
+        + (f", {stats['peer_rows']} curation rows kept for peer '{peer}'" if peer else ""))
     return stats
 
 

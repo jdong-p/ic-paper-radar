@@ -391,10 +391,14 @@ python briefing.py --sync-data-repo
 1. `git fetch` + `git reset --hard origin/main` in the clone: the shared file is taken exactly as it is,
    so Git never has to merge a binary file.
 2. It is merged into your store (below): new papers arrive as `external`, your marks are never touched,
-   and those that fit your pillars are adopted (`"data_repo": {"adopt_external": true}`).
+   and those that fit your pillars are adopted (`"data_repo": {"adopt_external": true}`). Empty fields are
+   filled, including the date of the last lineage search, and a paper's first-seen date only ever moves
+   earlier, to the first radar that saw it.
 3. Your store is exported, cleaned, back over the shared file: every paper, the merged ones included.
+   An empty field is always written as NULL (never `[]` or `''`), so every radar writes the same file.
 4. It commits and pushes **only if** the remote gains something (new papers, missing abstracts or
-   references, higher citation counts), so two radars never trade empty commits. If someone pushed in the
+   references, a lineage-search date, an earlier first-seen date, higher citation counts), so two radars
+   never trade empty commits. If someone pushed in the
    meantime, it waits a random 2–5 s and starts again from step 1 (up to 3 times), so several radars
    syncing in the same minute take turns instead of failing.
 
