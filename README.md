@@ -464,15 +464,18 @@ in `config.json` with one or more raw arXiv search queries in `queries` (syntax:
 query through arXiv's official API, newest first, page by page back to the lookback window (at most
 `max_pages`), and keeps only papers whose title or abstract contains a term of **every** group in `must_all`
 (e.g. `[["LLM", "reinforcement learning"], ["analog circuit", "RFIC"]]`) and none of `exclude_any`; everything
-else is dropped, not stored. Kept papers are scored like any other paper with venue `arXiv`, filed under
+else is dropped, not stored. Keep `must_all` non-empty: an empty one lets every query result through. Kept
+papers are scored like any other paper with venue `arXiv`, filed under
 `pillar` if set, and cited as `@misc` with their arXiv id. `--topic` adds an arXiv stage only when the topic
 itself matches every `must_all` group. A preprint whose journal version is already in the store is skipped.
-They stay out of `--export-share` / `--sync-data-repo` unless `"share": true` (or you selected / cited them).
+They stay out of `--export-share` / `--sync-data-repo` unless `"share": true`, you selected / cited them, or the
+existing share file (e.g. the shared repo's) already has them, so an export never drops a paper the remote has.
 arXiv allows one request every 3 s, so the radar waits `min_interval_s` (at least 3); no key is needed.
 默认关闭。适合主要先发在 arXiv 上的方向：在 `config.json` 里设 `"arxiv": {"enabled": true}`，在 `queries` 中写
 arXiv 检索式。每周运行按时间倒序分页查询，只保留标题或摘要同时命中 `must_all` 每一组、且不含 `exclude_any`
 的论文，其余直接丢弃、不入库。保留的论文与其他论文一样打分（venue 为 `arXiv`），可用 `pillar` 归到某个方向。
-`--topic` 只有在主题本身满足 `must_all` 时才查 arXiv。除非 `"share": true`，不会进入共享数据库。
+`must_all` 不要留空：留空时检索结果会全部保留。`--topic` 只有在主题本身满足 `must_all` 时才查 arXiv。除非
+`"share": true`、你选中/引用过，或已有的共享文件里本来就有，否则不会进入共享数据库。
 
 ### Optional: AI digests with the Claude Code CLI / 可选：用 Claude Code 生成 AI 摘要
 

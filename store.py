@@ -166,10 +166,21 @@ def export_clean_share_db(src_db_path, dst_db_path, include_curation=False, secr
     no personal column set, no Pillar line, empty meta, and no FORBIDDEN string or any of `secrets` (e.g. the
     sync token) in any text. include_curation=True keeps marks, notes, pillars, scores and meta (for a
     collaborator who should see them); the text check still runs. skip_arxiv=True leaves out this radar's own
-    arXiv preprints unless selected or cited (arxiv_source.share_skip). Returns {papers, digests, abstracts, bytes}."""
+    arXiv preprints unless selected or cited (arxiv_source.share_skip), but never one whose DOI the existing dst
+    already has (a peer's shared preprint, adopted or found here too), so the export never shrinks below it.
+    Returns {papers, digests, abstracts, bytes}."""
     dst = Path(dst_db_path)
     tmp = dst.with_name(dst.name + ".tmp")
     tmp.unlink(missing_ok=True)
+    shared = []  # arXiv DOIs the existing share file already has: kept by skip_arxiv
+    if skip_arxiv and dst.exists():
+        old = sqlite3.connect(f"file:{dst.as_posix()}?mode=ro", uri=True)
+        try:
+            shared = [(r[0],) for r in old.execute("SELECT doi FROM papers WHERE doi LIKE '10.48550/arxiv.%'")]
+        except sqlite3.Error:
+            pass
+        finally:
+            old.close()
     src = sqlite3.connect(f"file:{Path(src_db_path).as_posix()}?mode=ro", uri=True)
     try:
         out = sqlite3.connect(tmp)
@@ -183,7 +194,9 @@ def export_clean_share_db(src_db_path, dst_db_path, include_curation=False, secr
         db.execute("DELETE FROM api_usage")
         db.execute("DELETE FROM peer_curation")
         if skip_arxiv:
-            db.execute(f"DELETE FROM papers WHERE {ARXIV_PRIVATE}")
+            db.execute("CREATE TEMP TABLE shared (doi TEXT PRIMARY KEY)")
+            db.executemany("INSERT OR IGNORE INTO shared VALUES (?)", shared)
+            db.execute(f"DELETE FROM papers WHERE {ARXIV_PRIVATE} AND doi NOT IN (SELECT doi FROM shared)")
         if not include_curation:
             db.execute(f"UPDATE papers SET {PERSONAL_RESET}")
             for doi, d in db.execute("SELECT doi, digest FROM papers WHERE digest LIKE '%**Pillar:**%'").fetchall():
