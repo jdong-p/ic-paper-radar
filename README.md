@@ -91,15 +91,40 @@ The **🧭 Setup Progress & Readiness** card at the top shows what is still miss
    🧬 Biology, Biomedical & Medicine (PubMed / bioRxiv), 🧪 Chemistry, Materials & ChemE, or 🛠️ Robotics,
    Control & General Engineering.\
    **选择领域预设**：在 **🧭 Domain preset** 中，点击对应卡片上的 **Apply**。
-2. **Add your research pillars and weighted keywords.** In **🎯 My Research Themes & Keywords**, add and
-   name 1–9 pillars (a pillar is one research direction, e.g. "Noise-shaping SAR ADCs"), then add keyword
-   chips with a weight under each one (e.g. `bootstrapped switch` · 5). A paper's score is the sum of the
-   weights it hits.\
-   **添加研究方向和加权关键词**：在 **🎯 My Research Themes & Keywords** 中添加并命名 1–9 个方向（pillar），
-   再为每个方向添加带权重的关键词；论文得分 = 命中关键词的权重之和。
-3. **Add VIP authors and anchors.** In **👤 Key Authors & 🏛️ Classic Anchors**, list the researchers you
-   follow and the DOIs of landmark papers (papers that cite them score higher).\
-   **添加重点作者和锚点论文**：在 **👤 Key Authors & 🏛️ Classic Anchors** 中填写关注的作者和经典论文的 DOI。
+2. **Let 🪄 Quick Keyword Setup build your keywords (no AI, 0 tokens).** In the **🪄** card:
+   - name 1–9 pillars (a pillar is one research direction, e.g. "Pipelined & Ring-Amp ADCs"), add **2–5 anchor
+     DOIs** (papers you love) and type a few **rough seed words** per pillar (e.g. `ring amplifier, pipelined
+     ADC, low power`);
+   - click **🪄 Auto-Plan Keywords, Weights & VIPs (from Anchors + Seeds)**;
+   - review the preview (weighted keywords from +5 down to +1, unit regexes, a `negative_override`, VIP
+     authors, each with its evidence, and how many papers would pass), then click **✅ Apply Selected to My
+     Config**.\
+   **让 🪄 快速关键词设置自动生成关键词（无需 AI，0 token）**：命名方向、添加 2–5 篇你喜欢的锚点论文 DOI、为每个方向写几个
+   粗略的种子词，点击 **🪄 Auto-Plan**，在预览中勾选后点 **✅ Apply Selected to My Config**。
+3. **Fine-tune.** Every keyword stays editable in **🎯 My Research Themes & Keywords** (click a weight to change
+   it), and VIP authors and anchors in **👤 Key Authors & 🏛️ Classic Anchors**.\
+   **微调**：所有关键词都可以在 **🎯 My Research Themes & Keywords** 中修改，重点作者与锚点论文在
+   **👤 Key Authors & 🏛️ Classic Anchors** 中修改。
+
+**🎯 How keyword weights work (min_score = 5).** A paper becomes a candidate when the weights of the keywords
+in its title, abstract and index terms add up to `min_score`:
+
+**🎯 关键词权重说明（min_score = 5）**：论文标题、摘要和索引词中命中的关键词权重之和达到 `min_score` 时，论文成为候选。
+
+| Weight | Meaning | Examples |
+|---|---|---|
+| **+5** | Core target phrase: one hit alone passes `min_score`<br>核心目标短语：命中一次即可达到 `min_score` | `ring amplifier`, `noise-shaping SAR` |
+| **+4** | Specific topology or acronym (rare in the store, frequent in your field)<br>特定结构或缩写 | `MDAC`, `NTF`, `residue amplifier` |
+| **+3** | Key mechanism, or a metric regex (`re:…`)<br>关键机制或指标正则 | `comparator`, `re:fJ-energy` |
+| **+2** | Supporting circuit or method term<br>辅助电路或方法术语 | `gain error`, `calibration scheme` |
+| **+1** | Broad context word: never passes `min_score` alone<br>宽泛的上下文词，单独永远达不到 `min_score` | `low power`, `sensor`, `CMOS` |
+
+The planner reads only your own paper store (and OpenAlex for anchors it lacks). It weights each term by how
+much more often it appears in your seed papers than in the whole store, caps terms that are common anyway, and
+checks that the full set doesn't flood your radar: words found in more than 5 % of the store stay at +1.
+
+规划器只读取你自己的论文库（以及 OpenAlex 上你的库中没有的锚点论文）。它按一个词在种子论文中比在整个库中常见多少来定权重，
+对本来就常见的词设上限，并检查整套关键词不会让雷达被大量论文淹没：出现在 5 % 以上论文中的词最多 +1。
 4. ***(Optional)* Connect a private data repo.** In **🤝 Private Shared Repo & Peer Sync**, either click
    **✨ Create / Init My Private Repo** to start your own, or, if a collaborator gave you access to theirs
    (for example a lab corpus of 10,000+ papers), paste its URL and click **📥 Clone & Connect Private Data
@@ -590,6 +615,21 @@ pillars).
 `config.json`：Git 会忽略它，`git pull` 不会覆盖或冲突，新版本新增的设置会自动生效。填写方向和关键词之前，
 `python briefing.py` 会提示 `[SETUP REQUIRED]` 并停止。
 
+### Keyword plan from the terminal (= 🪄 Auto-Plan)
+*在终端中生成关键词方案（等同于 🪄 Auto-Plan）*
+
+```bash
+python briefing.py --plan-keywords "ring amplifier, pipelined ADC, low power; noise-shaping SAR"
+```
+
+Seed words of pillar 1, then `;` and those of pillar 2, and so on; the anchors and pillar names come from your
+`config.json`. It prints the weighted keywords with their evidence, the calibration, a `negative_override`, VIP
+authors and a `positive_keywords` fragment to paste, and saves the full plan in
+`output/_system/keyword_plan.json`. It changes nothing by itself.
+
+依次写出方向 1 的种子词、`;`、方向 2 的种子词……锚点论文和方向名称取自 `config.json`。它会输出加权关键词及依据、校准结果、
+`negative_override`、重点作者，以及可直接粘贴的 `positive_keywords` 片段，本身不修改任何文件。
+
 ### Setup with an AI assistant
 *使用 AI 助手配置*
 
@@ -818,6 +858,7 @@ python briefing.py --adopt-external                     # later: take the ones t
 | `python briefing.py --sync-data-repo` | Sync with a shared corpus repo: fetch, merge, export, push if the remote gains (also on Fridays) |
 | `python briefing.py --init-data-repo OWNER/NAME` | Create (with `gh`) or clone your own private data repo, push the protocol files, set `remote_url` |
 | `python briefing.py --pull-data-repo` | Read only: fetch your data repo and every `read_repos` entry, run the domain check, merge only your data repo and repos with `merge_corpus` (no push) |
+| `python briefing.py --plan-keywords "SEEDS; SEEDS"` | 0-token keyword & weight plan from your anchors and seed words (prints it; 🪄 in `STARTUP.html` applies it) |
 | `python briefing.py --gui [PORT]` | Setup & Control Center in your browser (`Start_Radar_GUI.cmd` / `.command` do the same) |
 | `python briefing.py --lineage` | Conference ↔ journal links for every catalog paper |
 | `python briefing.py --finalize` | Finalize this week's report now |
@@ -837,6 +878,7 @@ python briefing.py --adopt-external                     # later: take the ones t
 | `briefing.py` | The command behind every button<br>运行入口 |
 | `CITATION.cff` | Citation metadata (GitHub's "Cite this repository") |
 | `scorer.py`, `presets.py` | v3.0 score boosters (coupling, taste) and domain presets |
+| `keyword_planner.py` | 🪄 0-token keyword & weight planner (`--plan-keywords`, STARTUP.html Auto-Plan) |
 | `run_lock.py` | One run at a time: `.run.lock` and `.run.log` (not in Git)<br>运行锁 |
 | `Start_Radar_GUI.cmd`, `Start_Radar_GUI.command`, `control_center.py` | The Setup & Control Center (`output/STARTUP.html`, `--gui`)<br>控制中心 |
 | `fetcher.py`, `topic.py`, `relations.py`, `pins.py` | Collection, scoring, deep-dives, lineage, pinning |

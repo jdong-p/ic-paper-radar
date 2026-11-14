@@ -19,6 +19,8 @@ API (JSON):
   POST /api/run           ← {"action": "rescore_and_seed" | "pull_data_repo" | "sync_data_repo" | "daily",
                              "config"?: {...}, "clone_url"?, "clone_dir"?}: saves the config, then runs briefing.py
                             in a background worker (one job at a time)
+  POST /api/plan_keywords ← {"pillars": [{"name", "seeds"}], "anchors": [...]} → the 0-token keyword & weight plan
+                            (keyword_planner.py, read only; STARTUP.html 🪄 Auto-Plan shows it in a preview)
   GET  /api/job?since=N   → {"id", "running", "action", "rc", "lines": [...], "next"}: the job's output from line N
   GET  /api/active?since=B → {"active", "id", "what", "lines", "next"}: a run this server didn't start (07:00 task,
                             Friday sync, a terminal) from .run.log byte B (run_lock.py)
@@ -1011,6 +1013,9 @@ def api_post(path, req, jobs):
     if not isinstance(req, dict):
         return 400, {"ok": False, "error": "expected a JSON object"}
     try:
+        if path == "/api/plan_keywords":  # v3.0.5: 🪄 the 0-token keyword & weight planner (read only)
+            import keyword_planner
+            return keyword_planner.api(load_cfg(), req)
         if path == "/api/config":
             cfg, changed = _save(req)
             return 200, {"ok": True, "changed": changed, "editable": editable(cfg), "status": status(cfg)}
@@ -1100,6 +1105,7 @@ def render(data):
 <section class="card" id="c-run"></section>
 <section class="card" id="c-console" hidden></section>
 <section class="card" id="c-preset"></section>
+<section class="card" id="c-plan"></section>
 <section class="card" id="c-themes"></section>
 <section class="card" id="c-people"></section>
 <section class="card" id="c-repo"></section>
@@ -1156,6 +1162,11 @@ padding:12px;background:var(--bg);color:var(--fg);font:inherit;cursor:pointer}.d
 .dmesh{margin-top:12px;border-top:1px dashed var(--line);padding-top:8px}
 .bottombar{position:sticky;bottom:0;z-index:30;display:flex;gap:8px;justify-content:flex-end;align-items:center;padding:10px 16px;
 background:var(--bg);border-top:1px solid var(--line)}
+.wpill{display:inline-block;min-width:2.3em;text-align:center;border-radius:6px;padding:0 6px;font-weight:700;color:#fff}
+.w5{background:#c0392b}.w4{background:#d35400}.w3{background:#a67c00}.w2{background:#2e86c1}.w1{background:#7f8c8d}
+input.wsel{color:#fff;font-weight:700;border:0}.legendbox{border:1px solid var(--line);border-radius:10px;padding:4px 12px 2px;margin:6px 0 10px}
+table.legend td{padding:3px 8px;vertical-align:top}.planrow input.pname{flex:0 1 300px}.planrow input.seeds{flex:1;min-width:220px}
+.mbox.wide{max-width:1000px}.planbody{max-height:64vh;overflow:auto}.plantab td{padding:3px 6px;vertical-align:top}
 .modal{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:60;display:flex;align-items:center;justify-content:center;padding:16px}
 .modal[hidden]{display:none}.mbox{background:var(--card);color:var(--fg);border-radius:14px;max-width:620px;width:100%;padding:18px 20px;
 border:2px solid var(--warn);box-shadow:0 10px 40px rgba(0,0,0,.3)}
@@ -1498,6 +1509,128 @@ function renderThemes() {
     h('div', {class: 'row'}, h('label', {}, 'min_score ', h('input', {class: 'in w', type: 'number', min: 0, max: 1000, step: 1, value: S.min_score,
       oninput: e => { S.min_score = Number(e.target.value); changed(); }})), h('span', {class: 'muted small'}, 'papers below this score never become candidates (default 5).')));
   renderPillarCounts();
+  renderPlan();
+}
+
+// ---------- 🪄 0-token keyword & weight planner (v3.0.5, keyword_planner.py) ----------
+let SEEDMAP = (() => { try { return JSON.parse(localStorage.getItem('paper_radar_seeds') || '{}'); } catch (e) { return {}; } })();
+const seedKey = (p, i) => (p.name || '').trim() || `#${i}`;
+function seedsOf(p, i) { return p.seeds != null ? p.seeds : (SEEDMAP[seedKey(p, i)] || ''); }
+function setSeeds(p, i, v) { p.seeds = v; SEEDMAP[seedKey(p, i)] = v; try { localStorage.setItem('paper_radar_seeds', JSON.stringify(SEEDMAP)); } catch (e) {} }
+const LEGEND = [[5, 'Core target phrase', '1 hit alone passes min_score', 'ring amplifier · noise-shaping SAR'],
+  [4, 'Specific topology / acronym', 'rare in the store, frequent in your field', 'MDAC · NTF · residue amplifier'],
+  [3, 'Key mechanism / metric regex', 're:… unit patterns (nW, fJ, MS/s …)', 'comparator · re:fJ-energy'],
+  [2, 'Supporting circuit / method term', 'helps in combination', 'gain error · calibration scheme'],
+  [1, 'Broad context word', 'never passes min_score alone', 'low power · sensor · CMOS']];
+function renderPlan() {
+  const el = $('#c-plan'); if (!el || !KW) return;
+  const ms = S.min_score == null ? 5 : S.min_score;
+  const legend = h('table', {class: 'mini legend'}, h('tbody', {}, LEGEND.map(([w, t, note, ex]) => h('tr', {},
+    h('td', {}, h('span', {class: 'wpill w' + w}, '+' + w)), h('td', {}, h('b', {}, t), h('div', {class: 'muted small'}, note)),
+    h('td', {class: 'small muted'}, ex)))));
+  const pillars = KW.pillars.map((p, i) => h('div', {class: 'row planrow'}, h('span', {class: 'num'}, `P${i + 1}`),
+    STARTER ? h('input', {class: 'in pname', value: p.name, placeholder: 'Pillar name, e.g. Pipelined & Ring-Amp ADCs',
+                          oninput: e => { const s0 = seedsOf(p, i); p.name = e.target.value; setSeeds(p, i, s0); changed(); }, onchange: () => renderThemes()})
+            : h('b', {class: 'pname'}, p.name.replace(/^Pillar\s*\d+\s*[—–-]\s*/, '')),
+    h('input', {class: 'in seeds', value: seedsOf(p, i), placeholder: 'rough seed words, comma-separated: ring amplifier, pipelined ADC, low power',
+                oninput: e => setSeeds(p, i, e.target.value)})));
+  const doiIn = h('input', {class: 'in', placeholder: '10.1109/JSSC.2020.1234567 or a doi.org link', size: 34});
+  const addDoi = () => {
+    const d = cleanDoi(doiIn.value); if (!d) return;
+    if (!/^10\.\d{4,9}\/\S+$/.test(d)) return alert('That is not a DOI (it starts with 10.).');
+    if (S.anchors.some(x => x.toLowerCase() === d.toLowerCase())) return toast('Already an anchor');
+    S.anchors.push(d); changed(); renderPeople();
+  };
+  doiIn.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); addDoi(); } });
+  const anchors = S.anchors.length ? h('div', {class: 'chips'}, S.anchors.map((d, i) => h('span', {class: 'chip'}, h('span', {class: 't'}, d),
+      h('button', {title: 'Remove anchor', onclick: () => { S.anchors.splice(i, 1); changed(); renderPeople(); }}, '✕'))))
+    : h('p', {class: 'muted small'}, 'No anchors yet: 2–5 papers you love make the plan much better.');
+  fill(el, h('h2', {}, '🪄 Quick Keyword Setup', h('span', {class: 'muted small'}, '0 tokens, no AI: from your anchors and a few rough words')),
+    h('div', {class: 'legendbox'}, h('h3', {}, `🎯 How Keyword Weights Work (min_score = ${ms})`), legend,
+      h('p', {class: 'muted small'}, `A paper becomes a candidate when the weights of the keywords in its title, abstract and index terms add up to ${ms}: one +5 is enough, +1 words only help in combination. ALL-CAPS keywords match case; a space or hyphen matches either; plurals match.`)),
+    h('h3', {}, 'Step 1 · Name your pillars, add 2–5 anchor DOIs and a few rough seed words'),
+    pillars,
+    STARTER ? h('div', {class: 'row'}, h('button', {class: 'btn small', disabled: KW.pillars.length >= D.max_pillars, onclick: () => {
+      KW.pillars.push({name: '', short: '', marker: null, kws: []}); changed(); renderThemes(); }}, '＋ Add pillar')) : null,
+    h('div', {class: 'row'}, h('span', {class: 'small'}, '🏛️ Anchor DOIs (papers you love):'), doiIn, h('button', {class: 'btn small', onclick: addDoi}, '＋ Add')), anchors,
+    h('h3', {}, 'Step 2 · Let the planner build the weighted keywords'),
+    h('div', {class: 'row'}, h('button', {class: 'btn primary', id: 'planbtn', onclick: planKeywords}, '🪄 Auto-Plan Keywords, Weights & VIPs (from Anchors + Seeds)'),
+      h('span', {class: 'muted small'}, 'Reads your paper store (and OpenAlex for anchors it lacks). Nothing is changed until you apply.')),
+    h('h3', {}, 'Step 3 · Review the suggestions and apply'),
+    h('p', {class: 'muted small'}, 'A preview lists weighted keyword chips (+5 down to +1), metric regexes, a negative_override and VIP authors, each with the evidence behind it. Untick what you don\'t want, adjust weights, then ✅ Apply Selected to My Config. Fine-tune anything later in 🎯 My Research Themes & Keywords below.'));
+}
+async function planKeywords() {
+  const pillars = KW.pillars.map((p, i) => ({name: (p.name || '').trim(), seeds: seedsOf(p, i).split(/[,;\n]+/).map(s => s.trim()).filter(Boolean)}));
+  if (!pillars.length || pillars.some(p => !p.name)) return alert('Step 1: give every pillar a name first.');
+  if (!pillars.some(p => p.seeds.length) && !S.anchors.length) return alert('Step 1: add a few rough seed words or 2–5 anchor DOIs first.');
+  if (!API) {
+    const cmd = `${D.python || 'python'} briefing.py --plan-keywords "${pillars.map(p => p.seeds.join(', ')).join('; ')}"`;
+    return modal('🪄 Auto-Plan needs the Control Center server', h('div', {}, h('p', {}, 'This page was opened as a file. Start Start_Radar_GUI (or python briefing.py --gui) for the interactive preview, or run this in the radar folder:'),
+      h('pre', {class: 'bib'}, cmd)), [h('button', {class: 'btn', onclick: () => { $('#modal').hidden = true; }}, 'Close')]);
+  }
+  const b = $('#planbtn'); if (b) { b.disabled = true; b.textContent = '🪄 Planning… (reading your store)'; }
+  let r;
+  try { r = await call('POST', '/api/plan_keywords', {pillars, anchors: S.anchors}); }
+  catch (e) { r = {ok: false, error: String(e)}; }
+  finally { if (b) { b.disabled = false; b.textContent = '🪄 Auto-Plan Keywords, Weights & VIPs (from Anchors + Seeds)'; } }
+  if (!r.ok) return alert('Planner: ' + (r.error || 'failed'));
+  planModal(r);
+}
+function planModal(r) {
+  const picks = [], vipPicks = [];
+  const sections = r.pillars.map(pl => h('div', {class: 'planp'},
+    h('h3', {}, `P${pl.n} · ${pl.name}`, h('span', {class: 'muted small'}, ` · ${pl.seed_papers} seed papers (${pl.anchors.length} anchors)`)),
+    pl.examples.length ? h('details', {class: 'small muted'}, h('summary', {}, 'seed papers it learned from'), h('ul', {}, pl.examples.map(t => h('li', {}, t)))) : null,
+    pl.keywords.length ? h('table', {class: 'mini plantab'}, h('tbody', {}, pl.keywords.map(x => {
+      const box = h('input', {type: 'checkbox'}); box.checked = !x.exists;
+      const w = h('input', {class: 'in w wsel w' + x.w, type: 'number', min: -20, max: 20, step: 1, value: x.w,
+                           oninput: e => { e.target.className = 'in w wsel w' + Math.max(1, Math.min(5, Math.round(Number(e.target.value) || 1))); }});
+      picks.push({x, box, w, n: pl.n});
+      const rx = x.k.startsWith('re:');
+      return h('tr', {class: x.exists ? 'muted' : ''}, h('td', {}, box), h('td', {}, w),
+        h('td', {}, rx ? h('span', {title: x.k}, h('code', {}, x.k.slice(3).split('::')[0]), h('span', {class: 'muted small'}, ' regex' + (x.what ? ' · ' + x.what : '')))
+                       : h('b', {}, x.k), x.kind === 'seed' ? h('span', {class: 'tag'}, 'your seed') : null,
+          x.exists ? h('span', {class: 'tag'}, `already yours (${x.current > 0 ? '+' : ''}${x.current})`) : null),
+        h('td', {class: 'small muted'}, `${x.why} · ${x.s}/${x.n_s} seed papers · ${fmt(x.b)}/${fmt(x.store)} in store`));
+    }))) : h('p', {class: 'muted small'}, 'No suggestions: add seed words or anchors for this pillar.')));
+  const no = r.negative_override || {};
+  const ovBox = h('input', {type: 'checkbox'}); ovBox.checked = !!no.suggest && no.merged !== no.current;
+  const ovIn = h('input', {class: 'in wide mono', value: no.merged || ''});
+  const vips = (r.vip_authors || []).map(v => { const box = h('input', {type: 'checkbox'}); box.checked = true; vipPicks.push({v, box});
+    return h('label', {class: 'chip', title: `${v.seed_papers} of their ${v.store} papers in your store are seed papers`}, box, ` ${v.name} `, h('span', {class: 'muted small'}, v.store ? `(${v.seed_papers}/${v.store})` : `(${v.score})`)); });
+  const missing = (r.anchors || []).filter(a => a.source === 'missing');
+  const body = h('div', {class: 'planbody'},
+    h('p', {class: 'small muted'}, `${fmt(r.store_papers)} papers in your store (${r.fts ? 'FTS5' : 'scan'}) · weights from specificity: share of the seed papers ÷ share of the whole store; terms in more than 5 % of the store stay at +1.`),
+    r.calibration ? h('p', {class: 'small ' + (r.calibration.added > 0.12 * r.store_papers ? 'warn' : 'ok')}, `📏 With these weights ≈ ${fmt(r.calibration.pass)} papers (${(r.calibration.share * 100).toFixed(1)} % of your store) reach min_score, covering ${Math.round(r.calibration.seed_cover * 100)} % of the ${fmt(r.calibration.seed_papers)} seed papers` +
+      (r.calibration.base ? ` (your current keywords alone pass ${fmt(r.calibration.base)}; the plan adds ${fmt(r.calibration.added)})` : '') +
+      (r.calibration.lowered ? ` · ${r.calibration.lowered} weights were lowered so common terms don't flood your radar (${fmt(r.calibration.before)} papers before).` : '.')) : null,
+    missing.length ? h('p', {class: 'small warn'}, `Not found (neither in your store nor on OpenAlex): ${missing.map(a => a.doi).join(', ')}`) : null,
+    sections,
+    h('h3', {}, '🛡️ negative_override (title regex that keeps your core papers from being zeroed by a negative keyword)'),
+    h('label', {class: 'row'}, ovBox, ovIn), no.current ? h('p', {class: 'muted small'}, `current: ${no.current} (the suggestion adds the core phrases to it)`) : null,
+    h('h3', {}, '👤 Suggested VIP authors (frequent in your anchors ×3 and seed papers, and focused: ≥ 20 % of their papers are seed papers)'),
+    vips.length ? h('div', {class: 'chips'}, vips) : h('p', {class: 'muted small'}, 'none'));
+  const apply = () => {
+    let nk = 0, nu = 0, nv = 0;
+    for (const p of picks) {
+      if (!p.box.checked) continue;
+      const w = Number(p.w.value); if (!isFinite(w) || w < -20 || w > 20 || !KW.pillars[p.n - 1]) continue;
+      const hit = [KW.loose, ...KW.pillars.map(q => q.kws), ...KW.orphans.map(o => o.kws)].flat().find(it => it[0].toLowerCase() === p.x.k.toLowerCase());
+      if (hit) { if (hit[1] !== w) { hit[1] = w; nu++; } } else { KW.pillars[p.n - 1].kws.push([p.x.k, w]); nk++; }
+    }
+    for (const {v, box} of vipPicks) if (box.checked && !S.vip_authors.some(x => x.toLowerCase() === v.name.toLowerCase())) { S.vip_authors.push(v.name); nv++; }
+    if (ovBox.checked) S.negative_override = ovIn.value.trim();
+    $('#modal').hidden = true;
+    renderThemes(); renderPeople(); changed();
+    const msg = `Applied ${nk} keywords (${nu} weights changed), ${nv} VIP authors${ovBox.checked ? ', negative_override' : ''}`;
+    if (API) { save(); toast(msg + ' · saving config.json', 6000); } else toast(msg + ' · 💾 Save to download config.json', 7000);
+  };
+  modal('🪄 Suggested keywords, weights & VIPs', body, [
+    h('button', {class: 'btn primary', onclick: apply}, '✅ Apply Selected to My Config'),
+    h('button', {class: 'btn', onclick: () => { picks.forEach(p => { p.box.checked = !p.x.exists; }); }}, 'Select all new'),
+    h('button', {class: 'btn', onclick: () => { picks.forEach(p => { p.box.checked = false; }); }}, 'Clear'),
+    h('button', {class: 'btn', onclick: () => { $('#modal').hidden = true; }}, 'Cancel')]);
+  const mb = $('#modal .mbox'); if (mb) mb.classList.add('wide');
 }
 
 // ---------- 3. key authors & anchors ----------
@@ -1531,6 +1664,7 @@ function renderPeople() {
         rows.length ? h('div', {class: 'tablewrap'}, h('table', {class: 'mini'}, h('tbody', {}, rows))) : h('p', {class: 'muted small'}, 'No anchors yet.'))),
     h('div', {class: 'row'}, h('label', {}, 'Contact e-mail ', h('input', {class: 'in', type: 'email', size: 30, value: S.contact_email, placeholder: 'you@example.org',
       oninput: e => { S.contact_email = e.target.value.trim(); changed(); }})), h('span', {class: 'muted small'}, 'sent to Crossref / OpenAlex in the User-Agent (their “polite pool”); never to anyone else.')));
+  renderPlan();
 }
 
 // ---------- 4. private shared repo & peers ----------
@@ -1754,7 +1888,7 @@ function citeModal() {
      h('button', {class: 'btn', onclick: () => { $('#modal').hidden = true; }}, 'Close')]);
 }
 
-function renderAll() { renderDeploy(); renderStatus(); renderRun(); renderPreset(); renderThemes(); renderPeople(); renderRepo(); renderSearch(); lockRun(); }
+function renderAll() { renderDeploy(); renderStatus(); renderRun(); renderPreset(); renderPlan(); renderThemes(); renderPeople(); renderRepo(); renderSearch(); lockRun(); }
 window.addEventListener('beforeunload', e => { if (isDirty()) { e.preventDefault(); e.returnValue = ''; } });
 
 // ---------- saving ----------

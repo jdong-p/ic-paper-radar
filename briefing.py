@@ -562,6 +562,10 @@ def main():
                     help="Setup & Control Center: STARTUP.html served on http://127.0.0.1:18766 (or PORT) with working "
                          "buttons, until Ctrl+C (control_center.py)")
     ap.add_argument("--no-browser", action="store_true", help="with --gui: don't open the browser")
+    ap.add_argument("--plan-keywords", nargs="?", const="", metavar="SEEDS",
+                    help="0-token keyword & weight planner (keyword_planner.py): SEEDS = rough words of pillar 1; "
+                         "pillar 2; … With your anchors → suggested weighted keywords, re: metric regexes, "
+                         "negative_override and VIP authors (printed; STARTUP.html 🪄 applies them)")
     ap.add_argument("--seed-pillars", type=int, nargs="?", const=-1, metavar="N",
                     help="pull the best N archive papers per pillar (since catch_up.since) into this week now "
                          "(default catch_up.per_pillar), pin the anchors, and fill the Beyond-IEEE board")
@@ -580,6 +584,9 @@ def main():
         a.cite = None
 
     cfg = fetcher.load_config()
+    if a.plan_keywords is not None:  # v3.0.5, read only: prints the plan (STARTUP.html 🪄 shows it in a preview)
+        import keyword_planner
+        return keyword_planner.cli(cfg, a.plan_keywords)
     if a.gui is not None:  # the Setup & Control Center: a local server until Ctrl+C (control_center.py)
         import control_center
         return control_center.serve_gui(cfg, a.gui or None, open_browser=not a.no_browser)
