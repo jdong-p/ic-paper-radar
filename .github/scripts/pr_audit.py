@@ -42,6 +42,9 @@ BLANK = {
     ("portable_mode",): True,
     ("beyond_ieee", "key1_themes"): [],
     ("data_repo", "peer_id"): "",
+    # v3.0: your own private data repo and the ones shared with you stay out of the template
+    ("data_repo", "remote_url"): "",
+    ("data_repo", "read_repos"): [],
     ("paths", "data_repo_dir"): "",
     ("vpn", "campus_networks"): [],
     ("vpn", "campus_route_host"): "",
