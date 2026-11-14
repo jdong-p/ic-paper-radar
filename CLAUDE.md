@@ -55,6 +55,8 @@ Instructions for an AI agent (Claude Code) opened in this folder:
   checks); they belong in the user's `config.json`. Never put a token in a repo URL.
 - `domain_preset` (`ic_ece`, `bio_med`, `chem_mat`, `general_eng`; `presets.py`) sets the evidence badge and
   can load starter venues; PubMed / bioRxiv venues use `"source": "pubmed" | "biorxiv" | "medrxiv"`.
+- `CITATION.cff` is the citation metadata (keep `version` in step with releases). New domains go in
+  `presets.py`; new sources in `fetcher.SOURCES` (README, "Call for Co-Maintainers").
 - Reports and digests are written in English.
 - If `paper_store.sqlite` is missing or empty, say so: the user can request the pre-built database from
   the author (README.md, Step 1) or build one with weekly runs and `--topic` dives.

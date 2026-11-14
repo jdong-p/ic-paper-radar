@@ -64,7 +64,7 @@ def pillar_of(p, kwmap):
     if p.get("pillar"):  # chosen by the user (--add --pillar)
         return p["pillar"]
     m = re.search(r"\*\*Pillar:\*\*\s*\(?(?:Pillar\s*)?(\d+)", p.get("digest") or "")
-    if m and p.get("digest_ver") in PILLAR_DIGEST_VERS and int(m[1]) in PILLARS and int(m[1]):
+    if m and str(p.get("digest_ver") or "").split("+")[0] in PILLAR_DIGEST_VERS and int(m[1]) in PILLARS and int(m[1]):
         return int(m[1])
     votes = {}
     for h in p.get("hits") or []:
@@ -156,10 +156,11 @@ def silicon(p, cfg, auto=False):
     if p.get("user_silicon") and not auto:
         return presets.icon(p["user_silicon"], cfg)
     d = p.get("digest") or ""
-    if "Silicon-Verified" in d:
-        return presets.icon("silicon_verified", cfg)
-    if "Simulation-Only" in d:
-        return presets.icon("simulation_only", cfg)
+    for si, sim in presets.verdicts(cfg):  # the digest's Verification verdict in this preset's words (or IC's)
+        if si in d:
+            return presets.icon("silicon_verified", cfg)
+        if sim in d:
+            return presets.icon("simulation_only", cfg)
     v = fetcher.verification(p, cfg) if p.get("abstract") else "unclear"
     return presets.icon(v if v in SI_BADGE else "", cfg)
 

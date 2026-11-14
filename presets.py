@@ -137,3 +137,111 @@ def apply_changes(k, cfg, replace_venues=False):
         out.append((["venues"], json.loads(json.dumps(ven))))
         out.append((["catch_up", "flagship_venues"], [v["short"] for v in ven if not v.get("source")][:6]))
     return out
+
+
+# ---------- v3.0.1: preset-aware AI prompts (Starter Edition's briefing.claude) ----------
+# The IC prompts are the reference text; another preset swaps these exact passages. ic_ece = no change at all,
+# so its prompts, PROMPT_VER and every cached IC digest stay exactly as they were.
+IC_TEXT = {
+    "role": "You are a senior analog/mixed-signal IC designer",
+    "evidence": "Measured silicon results matter most to this reader; simulation-only work counts\nonly if its numbers or topology are exceptional.",
+    "verify": ("`✅ Silicon-Verified (<process>, <area>)` if the abstract reports fabricated/measured\n  silicon; "
+               "`⚠️ Simulation-Only (<why it may still be worth reading, or \"no exceptional metric\">)` if only\n"
+               "  simulations are reported;"),
+    "metrics": ("- **Architecture & key metrics:** Process · Power · FoM · ENOB or SNR/SNDR · Area · other headline numbers\n"
+                "  (inaccuracy, resolution FoM, efficiency, etc.)"),
+    "focus": "- **Suggested focus:** e.g. circuit implementation / measurement / calibration / system architecture, with a one-line reason",
+    "what": "- **What it is:** 1–2 sentences on the transducer / system / bioelectronic concept and the headline result",
+    "hardware": ("- **Hardware & numbers:** sensing principle · electronics used (custom IC? discrete? off-the-shelf?) ·\n"
+                 "  power / energy · size · key performance numbers"),
+    "takeaway": ("- **💡 System Concept & IC Takeaway:** why the concept is interesting, and concretely how a CMOS\n"
+                 "  ultra-low-power / sensor-interface designer could leverage it or build a better IC readout for it\n"
+                 "  (e.g. required noise, bandwidth, power budget, interface type)"),
+    "synth_head": "### Head-to-head (silicon-verified state of the art)",
+    "synth_cols": "with columns Paper · Pillar · Process ·\nPower · Key metric (FoM / inaccuracy / efficiency) · Area · Verification.",
+    "synth_order": ("Silicon-verified papers first; mark simulation-only rows with ⚠️ and never present their\n"
+                    "numbers as state of the art."),
+    "synth_beyond": "only as inspiration for IC work",
+}
+# the Verification verdicts a digest writes (catalog.silicon reads them back): (verified, simulation only)
+VERDICT = {"ic_ece": ("Silicon-Verified", "Simulation-Only"), "bio_med": ("Wet-Lab / In-Vivo / Clinical", "In-Silico Only"),
+           "chem_mat": ("Exp. Synthesized & Characterized", "DFT / Simulation Only"),
+           "general_eng": ("Hardware Tested", "Simulation-Only")}
+PROMPTS = {
+    "bio_med": {
+        "role": "You are a senior biomedical scientist (molecular biology, physiology and translational medicine)",
+        "evidence": "Wet-lab, in-vivo and clinical evidence matters most to this reader; in-silico-only work counts\nonly if its results or methods are exceptional.",
+        "verify": ("`✅ Wet-Lab / In-Vivo / Clinical (<model or cohort>, <n>)` if the abstract reports experiments in\n"
+                   "  cells, tissue, animals or patients; `⚠️ In-Silico Only (<why it may still be worth reading, or \"no exceptional result\">)`\n"
+                   "  if only computational / bioinformatic / modelling results are reported;"),
+        "metrics": ("- **Methods & key results:** model / cohort · sample size (n) · assay or modality · primary endpoint ·\n"
+                    "  effect size with CI or p-value · other headline numbers"),
+        "focus": "- **Suggested focus:** e.g. study design / methods / validation / clinical relevance, with a one-line reason",
+        "what": "- **What it is:** 1–2 sentences on the biological question / approach and the headline result",
+        "hardware": ("- **Methods & numbers:** model system or cohort · techniques (sequencing, imaging, assays, devices) ·\n"
+                     "  sample size · key quantitative results"),
+        "takeaway": ("- **💡 Biological / Translational Takeaway:** why it matters, and concretely how the reader could build on\n"
+                     "  it (follow-up experiments, diagnostics, therapy, devices, datasets)"),
+        "synth_head": "### Head-to-head (wet-lab / in-vivo / clinical evidence)",
+        "synth_cols": "with columns Paper · Pillar · Model / cohort ·\nn · Key result · Effect size · Verification.",
+        "synth_order": ("Wet-lab / in-vivo / clinical papers first; mark in-silico-only rows with ⚠️ and never present their\n"
+                        "results as established findings."),
+        "synth_beyond": "only as inspiration for the reader's research",
+    },
+    "chem_mat": {
+        "role": "You are a senior chemist and materials scientist",
+        "evidence": "Synthesized and characterized materials matter most to this reader; DFT / simulation-only work counts\nonly if its predictions or methods are exceptional.",
+        "verify": ("`✅ Exp. Synthesized & Characterized (<material>, <characterization>)` if the abstract reports a material\n"
+                   "  actually made and measured; `⚠️ DFT / Simulation Only (<why it may still be worth reading, or \"no exceptional result\">)`\n"
+                   "  if only calculations or simulations are reported;"),
+        "metrics": ("- **Synthesis & key properties:** material / composition · synthesis route · characterization (XRD, SEM/TEM,\n"
+                    "  NMR, XPS …) · key performance numbers (yield, conductivity, capacity, efficiency, stability)"),
+        "focus": "- **Suggested focus:** e.g. synthesis / characterization / mechanism / application, with a one-line reason",
+        "what": "- **What it is:** 1–2 sentences on the material / chemistry concept and the headline result",
+        "hardware": ("- **Materials & numbers:** material system · synthesis or processing · characterization ·\n"
+                     "  key performance numbers"),
+        "takeaway": ("- **💡 Materials / Synthesis Takeaway:** why it matters, and concretely how the reader could use it\n"
+                     "  (a synthesis route, a design rule, a characterization trick, an application)"),
+        "synth_head": "### Head-to-head (experimentally synthesized state of the art)",
+        "synth_cols": "with columns Paper · Pillar · Material ·\nSynthesis · Key property · Stability · Verification.",
+        "synth_order": ("Synthesized-and-characterized papers first; mark DFT / simulation-only rows with ⚠️ and never present their\n"
+                        "numbers as state of the art."),
+        "synth_beyond": "only as inspiration for the reader's research",
+    },
+    "general_eng": {
+        "role": "You are a senior robotics and control engineer",
+        "evidence": "Results on real hardware matter most to this reader; simulation-only work counts\nonly if its results or methods are exceptional.",
+        "verify": ("`✅ Hardware Tested (<platform>, <conditions>)` if the abstract reports experiments on a real robot,\n"
+                   "  prototype or plant; `⚠️ Simulation-Only (<why it may still be worth reading, or \"no exceptional result\">)` if only\n"
+                   "  simulations are reported;"),
+        "metrics": ("- **Approach & key metrics:** platform · method (controller, planner, learning) · benchmark / task ·\n"
+                    "  success rate, error, speed or efficiency · other headline numbers"),
+        "focus": "- **Suggested focus:** e.g. method / implementation / experiments / theory, with a one-line reason",
+        "what": "- **What it is:** 1–2 sentences on the system / method and the headline result",
+        "hardware": "- **Hardware & numbers:** platform · sensors and actuators · compute · key performance numbers",
+        "takeaway": ("- **💡 Engineering Takeaway:** why the concept is interesting, and concretely how the reader could build\n"
+                     "  on it (hardware, algorithm, benchmark)"),
+        "synth_head": "### Head-to-head (hardware-tested state of the art)",
+        "synth_cols": "with columns Paper · Pillar · Platform ·\nMethod · Key metric · Conditions · Verification.",
+        "synth_order": ("Hardware-tested papers first; mark simulation-only rows with ⚠️ and never present their\n"
+                        "numbers as state of the art."),
+        "synth_beyond": "only as inspiration for the reader's research",
+    },
+}
+
+
+def adapt_prompt(prompt, cfg):
+    """The prompt for this radar's domain preset: unchanged for ic_ece; otherwise each IC passage (IC_TEXT) that
+    occurs is replaced by the preset's own (PROMPTS)."""
+    k = key(cfg)
+    if k not in PROMPTS:
+        return prompt
+    for part, ic in IC_TEXT.items():
+        prompt = prompt.replace(ic, PROMPTS[k][part])
+    return prompt
+
+
+def verdicts(cfg):
+    """(verified, simulation-only) labels a digest's Verification line may hold: the preset's, then IC's (old digests)."""
+    out = [VERDICT[key(cfg)]]
+    return out + ([VERDICT["ic_ece"]] if out[0] != VERDICT["ic_ece"] else [])

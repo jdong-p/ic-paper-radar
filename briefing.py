@@ -63,6 +63,19 @@ PROMPT_VER = "starter-v1"  # bump to re-digest everything with a new prompt
 # en-v2 / en-v3 = the pre-loaded digests: kept, not redone (catalog.pillar_of ignores their Pillar line)
 DIGEST_VERS_OK = {PROMPT_VER, "en-v2", "en-v3"}
 
+
+def prompt_ver(cfg, base=None):
+    """digest_ver of a new digest (v3.0.1): PROMPT_VER for the default ic_ece preset, so its prompts and every cached
+    IC digest stay exactly as they were; '<ver>+<preset>' for bio_med / chem_mat / general_eng, whose prompts
+    presets.adapt_prompt rewrites. A digest written under another preset is kept, never redone."""
+    base = base or PROMPT_VER
+    k = presets.key(cfg)
+    return base if k == presets.DEFAULT else f"{base}+{k}"
+
+
+def digest_done(p, cfg):
+    return p.get("digest_ver") in DIGEST_VERS_OK or str(p.get("digest_ver") or "").split("+")[0] == PROMPT_VER
+
 # claude() replaces this with the pillars from config.json, e.g. "(1) SAR ADCs; (2) PLLs"
 PILLARS = "@@PILLARS@@"
 
@@ -154,7 +167,7 @@ def claude_available(cfg):
 
 def claude(prompt, cfg):
     cc = cfg["claude"]
-    prompt = prompt.replace(PILLARS, pillars_text(cfg))
+    prompt = presets.adapt_prompt(prompt.replace(PILLARS, pillars_text(cfg)), cfg)  # ic_ece: unchanged
     cmd = [cc["command"], "-p", "--output-format", "text", "--tools", "", "--strict-mcp-config"]
     if cc.get("model"):
         cmd += ["--model", cc["model"]]
@@ -199,14 +212,14 @@ def digest_new(store, cfg, week, today, log):
     """Digest candidates of this week that have no current digest. Cached: never repeated
     (a newly found conference precursor resets the cache so the lineage & delta bullet is added)."""
     todo = [p for p in store.where("status='candidate' AND week=? AND grp='ieee'", (week,))
-            if p.get("digest_ver") not in DIGEST_VERS_OK
+            if not digest_done(p, cfg)
             and (p.get("abstract") or (today - date.fromisoformat(p["first_seen"])).days >= 2)]  # wait 2 days for an abstract
     # pinned papers (anchors, --add) last: the catalog shows them, the weekly report doesn't
-    todo += [p for p in store.where("status='pinned' AND grp='ieee'") if p.get("digest_ver") not in DIGEST_VERS_OK
+    todo += [p for p in store.where("status='pinned' AND grp='ieee'") if not digest_done(p, cfg)
              and (p.get("abstract") or (today - date.fromisoformat(p["first_seen"])).days >= 2)]
     todo = sorted(todo, key=lambda p: (p["status"] == "pinned", bool(p.get("catchup")), -p["score"]))[
         :cfg["digests_per_day_max"]]  # new first
-    n = _run_digests(todo, DIGEST_PROMPT, PROMPT_VER, _digest_payload, store, cfg, log, "IEEE papers")
+    n = _run_digests(todo, DIGEST_PROMPT, prompt_ver(cfg), _digest_payload, store, cfg, log, "IEEE papers")
     n += digest_beyond(store, cfg, log)
     return n
 
@@ -215,8 +228,8 @@ def digest_beyond(store, cfg, log):
     """Every paper on the Beyond-IEEE board without a digest (≤ board_size, so one call)."""
     todo = [p for p in store.where("grp='beyond' AND status IN ('candidate','reported') AND "
                                    "COALESCE(user_mark,'normal')='normal' AND COALESCE(cited,0)=0")
-            if p.get("digest_ver") != BEYOND_VER]
-    return _run_digests(todo, BEYOND_PROMPT, BEYOND_VER,
+            if str(p.get("digest_ver") or "").split("+")[0] != BEYOND_VER]
+    return _run_digests(todo, BEYOND_PROMPT, prompt_ver(cfg, BEYOND_VER),
                         lambda p: {"doi": p["doi"], "title": p["title"], "venue": p["venue_name"],
                                    "abstract": p.get("abstract") or "(no abstract available — title only)"},
                         store, cfg, log, "Beyond-IEEE papers")
@@ -228,7 +241,7 @@ def pillar_line(added):
 
 def synthesis(store, cfg, week, papers, beyond, notes, force, log):
     cached = store.meta(f"synthesis:{week}")
-    key = [PROMPT_VER, BEYOND_VER, [p["doi"] for p in papers + beyond]]
+    key = [prompt_ver(cfg), BEYOND_VER, [p["doi"] for p in papers + beyond]]
     if cached and cached["key"] == key and not force:
         return cached["text"]
     payload = {"ieee": [{"no": i, "title": p["title"], "venue": p["venue"], "digest": p.get("digest") or "",
@@ -666,8 +679,8 @@ def main():
             try:
                 p = added and store.get(added)
                 # this paper right away if it has an abstract (else the daily queue waits for one, ≤ 2 days)
-                if p and p.get("digest_ver") not in DIGEST_VERS_OK and p.get("abstract"):
-                    _run_digests([p], DIGEST_PROMPT, PROMPT_VER, _digest_payload, store, cfg, print, "pinned paper")
+                if p and not digest_done(p, cfg) and p.get("abstract"):
+                    _run_digests([p], DIGEST_PROMPT, prompt_ver(cfg), _digest_payload, store, cfg, print, "pinned paper")
             except Exception as e:
                 print(f"Digest failed (retried next run): {e}", file=sys.stderr)
     if a.sync or marks or a.rescore or a.lineage or a.recall or a.topic or a.add or a.seed_pillars is not None:

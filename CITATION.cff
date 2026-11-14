@@ -1,0 +1,28 @@
+cff-version: 1.2.0
+message: "If you use IC Paper Radar in your research or teaching, please cite it as below."
+type: software
+title: "IC & Engineering Paper Radar: Automated Literature Intelligence, Verification Filtering, and Federated Curation"
+abstract: >-
+  A local, stdlib-only Python radar for new research papers. It collects IEEE, Crossref, OpenAlex,
+  arXiv, PubMed and bioRxiv/medRxiv records, scores them against the reader's own research pillars
+  (keywords, VIP authors, anchors, bibliographic coupling and a personal taste model), flags
+  measured-silicon or wet-lab evidence against simulation-only work, builds an interactive dashboard
+  and weekly reports, and lets collaborators federate a shared corpus through user-owned private Git
+  data repos. Contributors: Daidingxx (arXiv source connector).
+authors:
+  - alias: jdong-p
+version: 3.0.0
+date-released: "2026-11-14"
+license: MIT
+repository-code: "https://github.com/jdong-p/ic-paper-radar"
+url: "https://github.com/jdong-p/ic-paper-radar"
+keywords:
+  - literature review
+  - research software
+  - integrated circuits
+  - solid-state circuits
+  - bibliometrics
+  - recommender system
+  - SQLite FTS5
+  - OpenAlex
+  - PubMed

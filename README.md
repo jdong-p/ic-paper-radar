@@ -123,11 +123,13 @@ automatically (see "Updating").
 - **🎯 Smarter scores** (each shown in a paper's hits; `config.json` → `scoring`):
   - `title_boost` (keywords in the title count 1.5×);
   - `coupling:+3` (the paper builds on the same references as your 🏛️ / 📌 / ✅ / ⭐ papers);
-  - `taste:-2…+4`, a small classifier that learns from your own ✅ / ⭐ and 🗄️ marks once you have 8 of each.
-    The idea comes from Karpathy's arxiv-sanity-lite, done in plain Python.
+  - `taste:-2…+4`, a small classifier that learns from your own ✅ / ⭐ and 🗄️ marks. You need 8 ✅ / ⭐ / 📌;
+    if you archive few papers, papers you left unmarked in finalized weeks count as half a 🗄️ each. The idea
+    comes from Karpathy's arxiv-sanity-lite, done in plain Python.
 - **🧭 Other fields:** `"domain_preset"`: `ic_ece` (default), `bio_med` (PubMed + bioRxiv / medRxiv),
   `chem_mat`, `general_eng`. Each sets the evidence badge (e.g. 🧬 Wet-Lab / In-Vivo vs 💻 In-Silico Only)
-  and can load starter venues. A venue with `"source": "pubmed"` (`"query"`: a PubMed search term) or
+  and can load starter venues. With the Claude CLI, the AI digests and the weekly synthesis switch to the
+  field's wording too (e.g. 💡 Biological / Translational Takeaway); IC digests stay exactly as before. A venue with `"source": "pubmed"` (`"query"`: a PubMed search term) or
   `"source": "biorxiv"` / `"medrxiv"` (`"categories"`) is fetched from those free APIs.
 - **🖥️ Deployment:**
   - 💻 single PC (127.0.0.1 only, the default);
@@ -619,6 +621,7 @@ switches to `--no-claude` by itself and everything else still works. Add `--no-c
 | `config.example.json` | The starter template and the defaults for any key your `config.json` lacks / 模板与默认值 |
 | `config_file.py` | Creates `config.json` from the template, merges it over the defaults |
 | `briefing.py` | The command you run / 运行入口 |
+| `CITATION.cff` | Citation metadata (GitHub's "Cite this repository") |
 | `scorer.py`, `presets.py` | v3.0 score boosters (coupling, taste) and domain presets |
 | `run_lock.py` | One run at a time: `.run.lock` and `.run.log` (not in Git) / 运行锁 |
 | `Start_Radar_GUI.cmd`, `Start_Radar_GUI.command`, `control_center.py` | The Setup & Control Center (`output/STARTUP.html`, `--gui`) / 控制中心 |
@@ -659,6 +662,60 @@ cp config.local.json config.json      # Windows: copy config.local.json config.j
 `git rm --cached config.json` and `git commit --no-edit`.
 如果你曾提交过自己的 `config.json`，拉取时会提示冲突；文件仍在目录中，运行 `git rm --cached config.json` 和
 `git commit --no-edit` 即可。
+
+<a name="call-for-co-maintainers"></a>
+## 🤝 Call for Co-Maintainers & Domain Leads / 招募共同维护者与领域负责人
+
+IC Paper Radar began as one PhD student's radar for sensor interfaces and ultra-low-power circuits. Since
+v3.0 it can follow any field. **We are looking for researchers who want to own a domain**:
+
+| Domain | What a lead would add |
+|---|---|
+| RF / mmWave / wireless | venues (IMS, RFIC, JSSC RF), keywords, an `rf_mmw` preset |
+| Power management / PLLs & clocking | DC-DC / LDO / PLL keywords, flagship venues |
+| Digital / AI accelerators / architecture | ISSCC digital, VLSI, ISCA / MICRO via OpenAlex, an architecture preset |
+| BioMed / PubMed | better `bio_med` cues and PubMed terms, clinical-trial registries |
+| Chemistry / materials | `chem_mat` venues, characterization cues, ChemRxiv as a source |
+| Robotics / control | `general_eng` venues (ICRA, IROS, CDC), hardware-test cues |
+
+**How to contribute:**
+- **A domain preset** is one entry in `presets.py`: its badge words, evidence cues and starter venues, plus
+  optional prompt passages.
+- **A source connector** is one function in `fetcher.py` registered in `SOURCES` (see `pubmed_venue`,
+  `biorxiv_venue`).
+- **The workflow:** open a PR against `main` (see "Contributing" below). The required **PR audit** check
+  compiles everything and keeps personal settings, paths, IPs and keys out of the repo, so a first PR is
+  safe to send.
+
+我们正在招募各领域的共同维护者（射频/毫米波、电源/PLL、数字/AI 加速器、生物医学、化学/材料、机器人）。新增一个领域
+预设只需在 `presets.py` 中添加一项；新增一个数据源只需在 `fetcher.py` 的 `SOURCES` 中注册一个函数。欢迎提交 PR，
+自动化的 PR audit 会帮你检查。
+
+### 🏆 Contributors Hall of Fame / 贡献者名人堂
+
+| Contributor | Contribution |
+|---|---|
+| **[@Daidingxx](https://github.com/Daidingxx)** | PR #2: the optional arXiv feed (`arxiv_source.py`, merged as `2b1d73f`), and the first peer radar on the shared corpus |
+| **[@jdong-p](https://github.com/jdong-p)** | Author and maintainer |
+
+<a name="citation"></a>
+## 📖 Citation / 引用
+
+If IC Paper Radar helps your research, please cite it. GitHub's **"Cite this repository"** button (from
+`CITATION.cff`) gives APA and BibTeX, or copy this:
+如果本工具对你的研究有帮助，欢迎引用：
+
+```bibtex
+@software{jdong_paper_radar_2026,
+  author    = {jdong-p},
+  title     = {{IC \& Engineering Paper Radar: Automated Literature Intelligence, Verification Filtering, and Federated Curation}},
+  year      = {2026},
+  version   = {3.0.0},
+  url       = {https://github.com/jdong-p/ic-paper-radar},
+  license   = {MIT},
+  note      = {Contributors: Daidingxx}
+}
+```
 
 ## Contributing / 参与开发
 

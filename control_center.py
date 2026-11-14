@@ -580,6 +580,7 @@ def store_status(cfg):
             import scorer
             out["taste_pos"] = one(f"SELECT COUNT(*) FROM papers WHERE {scorer.POS_SQL}")
             out["taste_neg"] = one(f"SELECT COUNT(*) FROM papers WHERE {scorer.NEG_SQL}")
+            out["taste_implicit"] = one(f"SELECT COUNT(*) FROM papers WHERE {scorer.IMPLICIT_SQL}")
         out["fts"] = bool(c.execute("SELECT 1 FROM sqlite_master WHERE name='papers_fts'").fetchone())
         dois = [str(d).lower() for d in cfg.get("anchors") or []]
         if dois:
@@ -699,13 +700,21 @@ def status(cfg):
                     "has_git": shutil.which("git") is not None,
                     "contact_email_set": bool(EMAIL_RX.match((cfg.get("contact_email") or "").strip()))},
             "data_repo": dr,
-            "taste": {"pos": st.get("taste_pos", 0), "neg": st.get("taste_neg", 0),
-                      "need": (cfg.get("scoring") or {}).get("taste_min_examples", 8),
-                      "enabled": (cfg.get("scoring") or {}).get("taste", True) is not False},
+            "taste": _taste_status(cfg, st),
             "deploy": deploy_status(cfg),
             "sharing": {"selected": st["selected"], "cited": st["cited"], "notes": st["notes"],
                         "share_curation": (cfg.get("data_repo") or {}).get("share_curation", True) is not False,
                         "share_notes": (cfg.get("data_repo") or {}).get("share_notes", True) is not False}}
+
+
+def _taste_status(cfg, st):
+    """What scorer.prepare trains on: explicit marks, plus passed-over papers while archives are below `need`."""
+    import scorer
+    t = scorer.settings(cfg)
+    pos, neg, need = st.get("taste_pos", 0), st.get("taste_neg", 0), t["taste_min_examples"]
+    imp = min(st.get("taste_implicit", 0), max(0, t["taste_max_negatives"] - neg)) if neg < need and pos >= need else 0
+    return {"pos": pos, "neg": neg, "implicit": imp, "weight": t["taste_implicit_weight"], "need": need,
+            "enabled": t["taste"], "active": bool(t["taste"] and pos >= need and neg + imp >= need)}
 
 
 def deploy_status(cfg):
@@ -1049,7 +1058,7 @@ def render(data):
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=5">
 <title>IC Paper Radar — Setup &amp; Control Center</title><style>{html_renderer.CSS}{CSS}</style></head>
-<body><header class="bar"><h1>⚙️ Setup &amp; Control Center <span class="muted small">v3.0</span></h1>
+<body><header class="bar"><h1>⚙️ Setup &amp; Control Center <span class="muted small">v3.0.1</span></h1>
 <a class="btn" href="DASHBOARD.html">📊 Open Dashboard ↗</a>
 <span id="mode" class="btn pill" title="">⏳ Connecting…</span>
 <span id="dirty" class="dirty" hidden>● unsaved changes</span>
@@ -1067,6 +1076,9 @@ def render(data):
 <section class="card" id="c-search"></section>
 <p class="muted foot">Generated <span id="gen"></span>. Secrets (IEEE key, tokens, <code>.env</code>) are never shown or
 stored here: only whether they are set.</p>
+<footer class="ccfoot"><a href="https://github.com/jdong-p/ic-paper-radar" target="_blank" rel="noopener">⭐ Star on GitHub</a> ·
+<a href="https://github.com/jdong-p/ic-paper-radar/blob/main/README.md#call-for-co-maintainers" target="_blank" rel="noopener">🤝 Co-Maintain / Submit a Domain Preset (PR)</a> ·
+<a href="#" onclick="citeModal(); return false;">📖 Cite Paper Radar</a></footer>
 </main><div class="bottombar"><span id="dirty2" class="dirty" hidden>● unsaved changes</span>
 <button class="btn" onclick="save()">💾 Save Config</button>
 <button class="btn primary" data-run="rescore_and_seed" onclick="run('rescore_and_seed')">▶ Run &amp; Update My Dashboard</button></div>
@@ -1118,6 +1130,8 @@ background:var(--bg);border-top:1px solid var(--line)}
 .modal[hidden]{display:none}.mbox{background:var(--card);color:var(--fg);border-radius:14px;max-width:620px;width:100%;padding:18px 20px;
 border:2px solid var(--warn);box-shadow:0 10px 40px rgba(0,0,0,.3)}
 mark{background:var(--citebg);color:inherit;border-radius:3px;padding:0 1px}
+.ccfoot{text-align:center;font-size:12.5px;color:var(--muted);padding:6px 0 18px}.ccfoot a{color:var(--muted)}.ccfoot a:hover{color:var(--accent)}
+pre.bib{background:var(--chip);border-radius:8px;padding:10px;font-size:12.5px;white-space:pre-wrap;user-select:all}
 @media (max-width:700px){.pillar .ph .short{width:90px}.kv{grid-template-columns:1fr}}
 """
 
@@ -1246,7 +1260,7 @@ function chips(list, o) {
 }
 
 // ---------- 1. setup progress ----------
-function tasteOn() { const t = ST.taste; return !!(t && t.enabled && t.pos >= t.need && t.neg >= t.need); }
+function tasteOn() { return !!(ST.taste && ST.taste.active); }
 function repoName(u) { return String(u || '').replace(/^https?:\/\/[^/]+\//, '').replace(/^git@[^:]+:/, '').replace(/\.git$/, ''); }
 function renderStatus() {
   const st = ST.store, env = ST.env, dr = ST.data_repo, p = ST.pillars;
@@ -1265,8 +1279,8 @@ function renderStatus() {
       : '⚪ No-LLM mode: scoring, dashboard and seeding work; digests and the weekly synthesis are skipped'},
     {ok: dr.connected, req: false, t: 'Private data repo', s: dr.connected ? `🟢 Connected (${repoName(dr.remote_url) || 'data repo'}) · ${fmt(dr.papers)} papers · ${dr.peers.length} peer(s)` + (dr.read_repos && dr.read_repos.length ? ` · ${dr.read_repos.length} shared repo(s) to read` : '')
       : '⚪ Not set up (optional): create your own private repo or clone a shared one below'},
-    {ok: tasteOn(), req: false, t: 'Taste model', s: ST.taste ? (tasteOn() ? `🟢 Trained on ${ST.taste.pos}+ / ${ST.taste.neg}− marks (taste:−2…+4 on every score)`
-      : `⚪ ${ST.taste.pos}+ / ${ST.taste.neg}− marks: needs ${ST.taste.need} ✅/⭐/📌 and ${ST.taste.need} 🗄️ archived${ST.taste.enabled ? '' : ' (off in scoring.taste)'}`) : '⚪ –'},
+    {ok: tasteOn(), req: false, t: 'Taste model', s: ST.taste ? (tasteOn() ? `🟢 Trained on ${ST.taste.pos}+ / ${ST.taste.neg}− marks${ST.taste.implicit ? ` + ${ST.taste.implicit} passed-over papers (×${ST.taste.weight})` : ''} (taste:−2…+4 on every score)`
+      : `⚪ ${ST.taste.pos}+ / ${ST.taste.neg}− marks: needs ${ST.taste.need} ✅/⭐/📌, and ${ST.taste.need} 🗄️ archived or passed-over reported papers${ST.taste.enabled ? '' : ' (off in scoring.taste)'}`) : '⚪ –'},
   ];
   const req = steps.filter(x => x.req), done = req.filter(x => x.ok).length;
   const all = steps.filter(x => x.ok).length;
@@ -1657,6 +1671,23 @@ async function doSearch(q, out) {
       h('td', {}, h('a', {href: 'https://doi.org/' + x.doi, target: '_blank', rel: 'noopener'}, x.title),
         h('div', {class: 'muted small', html: mark(x.snip)}), x.user_note ? h('div', {class: 'small'}, '🏷️ ' + x.user_note) : null),
       h('td', {class: 'small'}, [x.user_mark === 'selected' ? '✅' : '', x.cited ? '⭐' : '', x.user_mark === 'archived' ? '🗄️' : '', x.status].join(' ')))))));
+}
+
+// ---------- v3.0.1: cite this software (same as CITATION.cff) ----------
+const BIBTEX = `@software{jdong_paper_radar_2026,
+  author    = {jdong-p},
+  title     = {{IC \\& Engineering Paper Radar: Automated Literature Intelligence, Verification Filtering, and Federated Curation}},
+  year      = {2026},
+  version   = {3.0.0},
+  url       = {https://github.com/jdong-p/ic-paper-radar},
+  license   = {MIT},
+  note      = {Contributors: Daidingxx}
+}`;
+function citeModal() {
+  modal('📖 Cite Paper Radar', h('div', {}, h('p', {class: 'small'}, 'If the radar helped your research, a citation (or a ⭐) is the best thanks. GitHub also offers “Cite this repository” from CITATION.cff.'),
+    h('pre', {class: 'bib'}, BIBTEX)),
+    [h('button', {class: 'btn primary', onclick: () => { navigator.clipboard && navigator.clipboard.writeText(BIBTEX).then(() => toast('BibTeX copied'), () => toast('Copy failed: select the text')); }}, '📋 Copy BibTeX'),
+     h('button', {class: 'btn', onclick: () => { $('#modal').hidden = true; }}, 'Close')]);
 }
 
 function renderAll() { renderDeploy(); renderStatus(); renderRun(); renderPreset(); renderThemes(); renderPeople(); renderRepo(); renderSearch(); lockRun(); }
