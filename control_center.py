@@ -50,6 +50,10 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 CONFIG = HERE / "config.json"
 STARTER = (HERE / "config_file.py").exists()  # Starter Edition (public repo); else the Minisforum radar
+# the public repo was renamed jdong-p/ic-paper-radar → jdong-p/engineer-paper-radar (2026-11-14); the
+# Starter Edition carries the new name, the Minisforum radar stays "IC Paper Radar"
+NAME = "Engineer Paper Radar" if STARTER else "IC Paper Radar"
+REPO_URL = "https://github.com/jdong-p/engineer-paper-radar"
 PAGE = "STARTUP.html"
 GUI_PORT = 18766
 DATA_URL = "https://github.com/jdong-p/ic-paper-radar-data.git"
@@ -1057,8 +1061,8 @@ def render(data):
     blob = json.dumps(data, ensure_ascii=False).replace("</", "<\\/")
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=5">
-<title>IC Paper Radar — Setup &amp; Control Center</title><style>{html_renderer.CSS}{CSS}</style></head>
-<body><header class="bar"><h1>⚙️ Setup &amp; Control Center <span class="muted small">v3.0.1</span></h1>
+<title>{NAME} — Setup &amp; Control Center</title><style>{html_renderer.CSS}{CSS}</style></head>
+<body><header class="bar"><h1>⚙️ Setup &amp; Control Center <span class="muted small">v3.0.2</span></h1>
 <a class="btn" href="DASHBOARD.html">📊 Open Dashboard ↗</a>
 <span id="mode" class="btn pill" title="">⏳ Connecting…</span>
 <span id="dirty" class="dirty" hidden>● unsaved changes</span>
@@ -1076,8 +1080,8 @@ def render(data):
 <section class="card" id="c-search"></section>
 <p class="muted foot">Generated <span id="gen"></span>. Secrets (IEEE key, tokens, <code>.env</code>) are never shown or
 stored here: only whether they are set.</p>
-<footer class="ccfoot"><a href="https://github.com/jdong-p/ic-paper-radar" target="_blank" rel="noopener">⭐ Star on GitHub</a> ·
-<a href="https://github.com/jdong-p/ic-paper-radar/blob/main/README.md#call-for-co-maintainers" target="_blank" rel="noopener">🤝 Co-Maintain / Submit a Domain Preset (PR)</a> ·
+<footer class="ccfoot"><a href="{REPO_URL}" target="_blank" rel="noopener">⭐ Star on GitHub</a> ·
+<a href="{REPO_URL}/blob/main/README.md#call-for-co-maintainers" target="_blank" rel="noopener">🤝 Co-Maintain / Submit a Domain Preset (PR)</a> ·
 <a href="#" onclick="citeModal(); return false;">📖 Cite Paper Radar</a></footer>
 </main><div class="bottombar"><span id="dirty2" class="dirty" hidden>● unsaved changes</span>
 <button class="btn" onclick="save()">💾 Save Config</button>
@@ -1600,7 +1604,7 @@ function enterprise() {
     h('p', {class: 'muted'}, '部署带 Kubernetes、企业 SSO、防火墙穿透和合规审查的多租户公共集群？这可不是免费解决的问题！😂 要么切回单机 / Tailscale 虚拟局域网（零成本，两分钟搞定），要么带上精品咖啡，到 github.com/jdong-p 联系作者！'),
     h('p', {class: 'small muted'}, 'Nothing was changed in config.json.')),
     [h('button', {class: 'btn primary', onclick: () => { $('#modal').hidden = true; S.deployment = 'local'; renderDeploy(); changed(); }}, '😅 Back to Single PC'),
-     h('a', {class: 'btn', href: 'https://github.com/jdong-p/ic-paper-radar', target: '_blank', rel: 'noopener'}, '⭐ Star / Contact on GitHub')]);
+     h('a', {class: 'btn', href: 'https://github.com/jdong-p/engineer-paper-radar', target: '_blank', rel: 'noopener'}, '⭐ Star / Contact on GitHub')]);
 }
 function renderDeploy() {
   const dp = ST.deploy || {}, cur = S.deployment;
@@ -1674,12 +1678,12 @@ async function doSearch(q, out) {
 }
 
 // ---------- v3.0.1: cite this software (same as CITATION.cff) ----------
-const BIBTEX = `@software{jdong_paper_radar_2026,
+const BIBTEX = `@software{jdong_engineer_paper_radar_2026,
   author    = {jdong-p},
-  title     = {{IC \\& Engineering Paper Radar: Automated Literature Intelligence, Verification Filtering, and Federated Curation}},
+  title     = {{Engineer Paper Radar: Automated Literature Intelligence, Verification Filtering, and Federated Curation}},
   year      = {2026},
-  version   = {3.0.0},
-  url       = {https://github.com/jdong-p/ic-paper-radar},
+  version   = {3.0.2},
+  url       = {https://github.com/jdong-p/engineer-paper-radar},
   license   = {MIT},
   note      = {Contributors: Daidingxx}
 }`;
@@ -1830,7 +1834,7 @@ class GuiHandler(BaseHTTPRequestHandler):
             self.end_headers()
             return
         if not self._cookie_ok():
-            return self._send(401, "IC Paper Radar Control Center: open the link printed in its window (it holds this "
+            return self._send(401, f"{NAME} Control Center: open the link printed in its window (it holds this "
                                    "launch's key), or start it again with Start_Radar_GUI / python briefing.py --gui.",
                               "text/plain; charset=utf-8")
         if u.path.startswith("/api/"):
@@ -1905,7 +1909,7 @@ def serve_gui(cfg, port=None, open_browser=True):
     try:
         import curation
         (curation.system_dir(cfg) / "gui_link.txt").write_text(
-            "IC Paper Radar Control Center (this launch only; don't share these links):\n" + "\n".join(links) + "\n",
+            f"{NAME} Control Center (this launch only; don't share these links):\n" + "\n".join(links) + "\n",
             encoding="utf-8")
     except Exception:
         pass
@@ -1916,7 +1920,7 @@ def serve_gui(cfg, port=None, open_browser=True):
             for s in servers:
                 s.server_close()
         return 0
-    print("IC Paper Radar — Setup & Control Center\n"
+    print(f"{NAME} — Setup & Control Center\n"
           + "".join(f"  {u}\n" for u in links)
           + ("Opening it in your browser. " if open_browser else "Open this link in your browser. ")
           + "Keep this window open while you use the page; Ctrl+C (or closing it) stops it.\n"

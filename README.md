@@ -1,13 +1,58 @@
-# IC Paper Radar
+# 📡 Engineer Paper Radar (v3.0)
 
-**A free, local radar for new integrated-circuit papers, tuned to your own research.**
-**一个免费、在本地运行、按你自己的研究方向定制的 IC 论文雷达。**
+**A free, local radar for new engineering and science papers, tuned to your own research.**
+**一个免费、在本地运行、按你自己的研究方向定制的工程与科研论文雷达。**
 
-IC Paper Radar follows the IEEE solid-state-circuits venues (JSSC, ISSCC, VLSI, CICC, ESSERC, TCAS-I/II,
+Engineer Paper Radar started as **IC Paper Radar**, one PhD student's radar for integrated circuits. Since
+v3.0, pluggable **Domain Presets** run the same engine for **IC / ECE**, **Robotics, Control & General
+Engineering**, **BioMed (PubMed / bioRxiv / medRxiv)** and **Chemistry & Materials**. It is pure Python
+standard library: no `pip install`, no paid API, and no AI needed to set it up.
+
+Engineer Paper Radar 起源于 **IC Paper Radar**（一名博士生为集成电路方向打造的论文雷达）。从 v3.0 起，可插拔的
+**领域预设（Domain Presets）**让同一引擎服务于 **IC / 电子工程**、**机器人、控制与通用工程**、**生物医学（PubMed /
+bioRxiv / medRxiv）** 以及 **化学与材料**。纯 Python 标准库：无需 `pip install`、无需付费 API、配置也不需要 AI。
+
+## ✨ What's new in v3.0.2 / v3.0.2 亮点
+
+1. **🖥️ Zero-AI, zero-code Visual Control Center (`STARTUP.html` + `Start_Radar_GUI.cmd` / `.command`):**
+   double-click the launcher and configure your pillars, weighted keywords, VIP authors, anchors and the
+   deployment mode (💻 Single PC or 🌐 Virtual Mesh LAN) in the browser, then run updates with one click.
+   零 AI、零代码的可视化控制中心：双击启动器，在浏览器中配置方向、加权关键词、重点作者、锚点论文和部署模式
+   （单机 / 虚拟局域网），并一键运行更新。
+2. **🧭 4 domain cartridges (`presets.py`)**, switched with one setting / 四种领域预设，一键切换:
+
+   | Preset | Field | Evidence badge |
+   |---|---|---|
+   | `ic_ece` (default) | ⚡ IC & Solid-State Circuits | 🔬 Silicon-Verified vs ⚠️ Simulation-Only |
+   | `general_eng` | 🤖 General Engineering / Robotics & Control | 🛠️ Hardware Tested vs ⚠️ Simulation-Only |
+   | `bio_med` | 🧬 BioMed / PubMed / bioRxiv | 🧬 Wet-Lab / In-Vivo vs 💻 In-Silico Only |
+   | `chem_mat` | 🧪 Chemistry & Materials | 🧪 Exp. Synthesized vs 💻 DFT / Sim Only |
+
+   Each preset also brings starter venues and, with the Claude CLI, digests written in the field's own words.
+   每个预设自带起步期刊/会议，配合 Claude CLI 时 AI 摘要也会使用该领域的术语。
+3. **🎯 v3.0 hybrid scoring and FTS5 search engine:** SQLite `FTS5` + `bm25()` search in milliseconds,
+   OpenAlex lookups batched 40 DOIs per request, bibliographic coupling (`coupling:+3`), and a
+   Karpathy-style Naive Bayes **personal taste classifier** (`taste:-2…+4`) that learns from your
+   ✅ / ⭐ / 🗄️ clicks automatically.
+   混合打分与全文检索：FTS5 + bm25 毫秒级搜索、OpenAlex 每次批量查询 40 个 DOI、文献耦合加分，以及从你的
+   ✅ / ⭐ / 🗄️ 点击中自动学习的朴素贝叶斯**个人口味分类器**。
+4. **🔗 Decentralized, federated private data repos:** one-click **✨ Init** creates your own private
+   GitHub corpus repo; subscribe to colleagues' corpora with `read_repos` and browse their radars read-only
+   in `Peers/DASHBOARD_<peer>.html`.
+   去中心化的私有数据仓库：一键 **✨ Init** 创建你自己的私有 GitHub 论文库；通过 `read_repos` 订阅同事的论文库，
+   并在 `Peers/DASHBOARD_<peer>.html` 中只读浏览他们的雷达。
+
+> The repository was renamed from `jdong-p/ic-paper-radar`; GitHub redirects old links and clones, so
+> existing checkouts keep working (`git remote set-url origin <new URL>` is optional).
+> 本仓库由 `jdong-p/ic-paper-radar` 更名而来；GitHub 会自动重定向旧链接和旧的克隆地址。
+
+### The default IC / ECE preset / 默认 IC / ECE 预设
+
+With the default `ic_ece` preset, the radar follows the IEEE solid-state-circuits venues (JSSC, ISSCC, VLSI, CICC, ESSERC, TCAS-I/II,
 SSC-L, TBioCAS, Sensors Letters) and, optionally, Nature / Science. It scores every paper against
 **your research pillars**, writes a weekly report, and builds an interactive dashboard.
 
-IC Paper Radar 跟踪 IEEE 固态电路领域的主要会议和期刊（JSSC、ISSCC、VLSI、CICC、ESSERC、TCAS-I/II、SSC-L、
+默认的 `ic_ece` 预设跟踪 IEEE 固态电路领域的主要会议和期刊（JSSC、ISSCC、VLSI、CICC、ESSERC、TCAS-I/II、SSC-L、
 TBioCAS、Sensors Letters），并可选跟踪 Nature / Science。它按照**你的研究方向（pillars）**给每篇论文打分，
 生成每周报告，并输出一个可交互的面板。
 
@@ -175,7 +220,7 @@ downloads a new `config.json` to put in this folder, and each button shows the c
 ### With Claude Code (in this folder) / 使用 Claude Code（在本目录中）
 
 ```bash
-cd ic-paper-radar
+cd engineer-paper-radar
 claude
 ```
 
@@ -197,7 +242,7 @@ Then type (replace the brackets) / 然后输入（替换方括号内容）:
 #### AI Setup Prompt (copy the whole block / 复制整个代码块)
 
 ```text
-You are configuring "IC Paper Radar", a local tool that scores new IEEE solid-state-circuits papers
+You are configuring "Engineer Paper Radar" (IC preset), a local tool that scores new IEEE solid-state-circuits papers
 (JSSC, ISSCC, VLSI, CICC, ESSERC, TCAS-I/II, SSC-L, TBioCAS, Sensors Letters) against a PhD student's
 research pillars. Below my research description I paste my current config.json. Return the COMPLETE
 config.json with ONLY the keys listed in SCHEMA filled in; keep every other key and value exactly as
@@ -318,11 +363,11 @@ Run it every morning / 每天自动运行:
 
 - **Windows** (Task Scheduler):
   ```bat
-  schtasks /Create /TN PaperRadar /TR "cmd /c cd /d C:\path\to\ic-paper-radar && python briefing.py >> radar.log 2>&1" /SC DAILY /ST 07:00
+  schtasks /Create /TN PaperRadar /TR "cmd /c cd /d C:\path\to\engineer-paper-radar && python briefing.py >> radar.log 2>&1" /SC DAILY /ST 07:00
   ```
 - **macOS / Linux** (`crontab -e`; the computer must be awake):
   ```text
-  0 7 * * * cd "$HOME/ic-paper-radar" && /usr/bin/python3 briefing.py >> radar.log 2>&1
+  0 7 * * * cd "$HOME/engineer-paper-radar" && /usr/bin/python3 briefing.py >> radar.log 2>&1
   ```
 
 ### Catch-up: older papers join your radar / 补录：旧论文进入雷达
@@ -666,7 +711,7 @@ cp config.local.json config.json      # Windows: copy config.local.json config.j
 <a name="call-for-co-maintainers"></a>
 ## 🤝 Call for Co-Maintainers & Domain Leads / 招募共同维护者与领域负责人
 
-IC Paper Radar began as one PhD student's radar for sensor interfaces and ultra-low-power circuits. Since
+Engineer Paper Radar began as IC Paper Radar, one PhD student's radar for sensor interfaces and ultra-low-power circuits. Since
 v3.0 it can follow any field. **We are looking for researchers who want to own a domain**:
 
 | Domain | What a lead would add |
@@ -701,17 +746,17 @@ v3.0 it can follow any field. **We are looking for researchers who want to own a
 <a name="citation"></a>
 ## 📖 Citation / 引用
 
-If IC Paper Radar helps your research, please cite it. GitHub's **"Cite this repository"** button (from
+If Engineer Paper Radar helps your research, please cite it. GitHub's **"Cite this repository"** button (from
 `CITATION.cff`) gives APA and BibTeX, or copy this:
 如果本工具对你的研究有帮助，欢迎引用：
 
 ```bibtex
-@software{jdong_paper_radar_2026,
+@software{jdong_engineer_paper_radar_2026,
   author    = {jdong-p},
-  title     = {{IC \& Engineering Paper Radar: Automated Literature Intelligence, Verification Filtering, and Federated Curation}},
+  title     = {{Engineer Paper Radar: Automated Literature Intelligence, Verification Filtering, and Federated Curation}},
   year      = {2026},
-  version   = {3.0.0},
-  url       = {https://github.com/jdong-p/ic-paper-radar},
+  version   = {3.0.2},
+  url       = {https://github.com/jdong-p/engineer-paper-radar},
   license   = {MIT},
   note      = {Contributors: Daidingxx}
 }

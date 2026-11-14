@@ -1,5 +1,5 @@
 {
-    "_starter_note": "IC Paper Radar — Starter Edition. Fill in pillars, positive_keywords, negative_keywords, anchors, vip_authors and beyond_ieee.key1_themes (README.md, Step 2), then run: python briefing.py --rescore",
+    "_starter_note": "Engineer Paper Radar — Starter Edition. Fill in pillars, positive_keywords, negative_keywords, anchors, vip_authors and beyond_ieee.key1_themes (README.md, Step 2), then run: python briefing.py --rescore",
     "portable_mode": true,
     "host_lock": "",
     "dashboard_corpus": true,

@@ -229,7 +229,7 @@ def write_master_table(store, cfg, path):
     cite = {p["doi"]: p for p in store.where("cited=1")}
     selected = {p["doi"]: p for p in store.where("user_mark='selected'")}
     archived = {p["doi"]: p for p in store.where("user_mark='archived'")}
-    L = ["# IC Paper Radar — Master Table", "",
+    L = ["# Engineer Paper Radar — Master Table", "",
          "_Rewritten on every run. Workflow: 📋 Candidate → tick **✅ Select** to shortlist, **🗄️ Archive** to "
          "reject (it stays in the database and can be recalled by `--topic` / `--recall`); untick to send a paper "
          "back to Candidate. **⭐ Cite** is separate: a paper can be Selected *and* Cited ([cite.bib](cite.bib)); "
@@ -314,7 +314,7 @@ def write_bib(papers, path):
             continue
         seen.add(p["doi"])
         out.append(bib_entry(p, bib_key(p, keys)))
-    Path(path).write_text("% IC Paper Radar — generated automatically, do not edit by hand\n\n" + "\n\n".join(out) + "\n",
+    Path(path).write_text("% Engineer Paper Radar — generated automatically, do not edit by hand\n\n" + "\n\n".join(out) + "\n",
                           encoding="utf-8")
     return len(out)
 

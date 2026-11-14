@@ -1,4 +1,4 @@
-"""Zero-token collection for IC Paper Radar: everything lands in the SQLite store (store.py).
+"""Zero-token collection for Engineer Paper Radar: everything lands in the SQLite store (store.py).
 
 Order of each daily run (all public/free; IEEE capped at ieee_daily_budget calls/day):
   1. IEEE Xplore Metadata API, one query per venue for the lookback window (abstracts, citation counts)
@@ -216,7 +216,7 @@ def pubmed_venue(v, cfg, since, today, log=print):
     if not term:
         log(f"  [pubmed] {v['short']}: no query and no positive keywords yet")
         return []
-    common = {"db": "pubmed", "tool": "ic-paper-radar", **({"email": cfg["contact_email"]} if cfg.get("contact_email") else {})}
+    common = {"db": "pubmed", "tool": "engineer-paper-radar", **({"email": cfg["contact_email"]} if cfg.get("contact_email") else {})}
     q = {**common, "term": term, "datetype": "edat", "mindate": since.strftime("%Y/%m/%d"),
          "maxdate": today.strftime("%Y/%m/%d"), "retmax": int(v.get("max_results", 200)), "retmode": "json"}
     ids = json.loads(_get(EUTILS + "esearch.fcgi?" + urllib.parse.urlencode(q), cfg))["esearchresult"].get("idlist", [])

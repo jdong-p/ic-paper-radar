@@ -1,4 +1,4 @@
-"""IC Paper Radar — daily entry point; one progressive report per week, finalized on Friday.
+"""Engineer Paper Radar (formerly IC Paper Radar) — daily entry point; one progressive report per week, finalized on Friday.
 
   python briefing.py [--auto-degrade | --require-vpn] [--fetch-pdf] [--finalize] [--dry-run]
                      [--no-claude] [--no-backfill]
@@ -330,7 +330,7 @@ def _paper_block(head, p, today, notes):
 
 
 def render(week, friday, today, vpn, papers, also, catch, beyond, notes, edges, synth, final, store, cfg, run):
-    L = [f"# IC Paper Radar — Week {week} (ends Fri {friday:%d %b %Y})", ""]
+    L = [f"# Engineer Paper Radar — Week {week} (ends Fri {friday:%d %b %Y})", ""]
     L.append(f"> ✅ **Final** — {today:%a %d %b %Y}" if final else
              f"> 🟡 **In progress** — updated {datetime.now():%a %d %b %Y %H:%M}; final report on Friday {friday:%d %b}.")
     if vpn["connected"] is False:  # None = not checked (default daily run)
@@ -402,7 +402,7 @@ def render_beyond(beyond, today):
 
 
 def update_index(weekly_dir, topic_dir=None):
-    rows = ["# IC Paper Radar — Index", "", "**[DASHBOARD.html](DASHBOARD.html)** — open in a browser to filter, search and click ⭐/🗄️ · "
+    rows = ["# Engineer Paper Radar — Index", "", "**[DASHBOARD.html](DASHBOARD.html)** — open in a browser to filter, search and click ⭐/🗄️ · "
             "[MASTER_TABLE.md](MASTER_TABLE.md) — ⭐ cite, ✅ selected, 📋 candidate and 🗄️ archived papers · "
             "[cite.bib](cite.bib) — ⭐ Cite only ·[selected_pool.bib](selected_pool.bib) — ✅ + ⭐ · "
             "[all_reported.bib](all_reported.bib) — everything not archived",

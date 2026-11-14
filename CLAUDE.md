@@ -1,4 +1,4 @@
-# IC Paper Radar — Starter Edition
+# Engineer Paper Radar (formerly IC Paper Radar) — Starter Edition
 
 Instructions for an AI agent (Claude Code) opened in this folder:
 

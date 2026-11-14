@@ -429,7 +429,7 @@ function downloadBib(pool) {  // cite.bib = every ⭐; selected_pool.bib = ✅ o
   const name = pool ? 'selected_pool.bib' : 'cite.bib';
   const bib = markedDois(pool).map(d => PAGE.bib[d]).filter(Boolean);
   if (!bib.length) { alert(pool ? 'No ✅ Selected or ⭐ Cite papers on this page.' : 'No ⭐ Cite papers on this page.'); return; }
-  download(name, `% IC Paper Radar — ${name} exported from the browser\n\n` + bib.join('\n\n') + '\n', 'application/x-bibtex');
+  download(name, `% Engineer Paper Radar — ${name} exported from the browser\n\n` + bib.join('\n\n') + '\n', 'application/x-bibtex');
 }
 async function saveMarks() {
   if (RO) { alert("Read-only: this is a collaborator's radar."); return; }
@@ -961,7 +961,7 @@ def write_dashboard(store, cfg, path, peers=()):
             "weeks": weekly_reports(cfg), "sync": curation.page_sync_config(cfg),
             "welcome": not fetcher.pillars_ready(cfg), "badge": presets.badge(cfg)}
     n_store = store.db.execute("SELECT COUNT(*) FROM papers").fetchone()[0]
-    welcome = (f"""<div class="welcome">👋 <b>Welcome to IC Paper Radar!</b> No research pillars are configured yet.
+    welcome = (f"""<div class="welcome">👋 <b>Welcome to Engineer Paper Radar!</b> No research pillars are configured yet.
 Open <code>README.md</code> to configure your research domains with AI"""
                + (f", or use the search bar below to browse the {n_store:,} IC papers in your store." if n_store else ".")
                + " The Control Center sets your pillars, keywords, authors and private data repo, and runs the radar."
@@ -975,7 +975,7 @@ Open <code>README.md</code> to configure your research domains with AI"""
                                 "run or <code>briefing.py --sync</code>.")
     setup = (SETUP_BTN.replace('class="btn"', 'class="btn setup-hl"')  # empty or [SETUP REQUIRED]: the way in
              if not recs or data["welcome"] else SETUP_BTN)
-    Path(path).write_text(_page("IC Paper Radar — Dashboard", "", _bar("📡 IC Paper Radar", extra=setup + _peer_links(peers) + TAGS_BTN),
+    Path(path).write_text(_page("Engineer Paper Radar — Dashboard", "", _bar("📡 Engineer Paper Radar", extra=setup + _peer_links(peers) + TAGS_BTN),
                                 body, data, DASH_JS), encoding="utf-8")
     return len(recs)
 
@@ -1074,7 +1074,7 @@ def write_peer_dashboards(store, cfg, log=print):
                              "shared corpus repo (<code>--sync-data-repo</code>). Read-only: clicks here change nothing."))
         d.mkdir(parents=True, exist_ok=True)
         (d / f"DASHBOARD_{peer}.html").write_text(
-            _page(f"IC Paper Radar — {peer}'s Radar", "", _bar(f"👤 {peer}'s Radar", "../DASHBOARD.html", TAGS_BTN, readonly=True),
+            _page(f"Engineer Paper Radar — {peer}'s Radar", "", _bar(f"👤 {peer}'s Radar", "../DASHBOARD.html", TAGS_BTN, readonly=True),
                   body, data, DASH_JS), encoding="utf-8")
         out.append((peer, f"Peers/DASHBOARD_{peer}.html", len(recs)))
     keep = {f"DASHBOARD_{p}.html" for p, _, _ in out}
@@ -1116,7 +1116,7 @@ def write_phone_link(cfg):
     hosts = [h for h in sc["hosts"] if not h.startswith("127.")]
     if not hosts:  # Starter Edition: no sync server configured
         return
-    lines = ["IC Paper Radar on a phone or another computer (served by radar_sync_server.py on this computer).", "",
+    lines = ["Engineer Paper Radar on a phone or another computer (served by radar_sync_server.py on this computer).", "",
              "1. Open this link once in Safari (it stores a key cookie, then drops the key from the address):"]
     lines += [f"   http://{h}:{sc['port']}/?k={sc['token']}" for h in hosts]
     lines += ["2. Bookmark / 'Add to Home Screen' the page it opens:"] + [f"   http://{h}:{sc['port']}/" for h in hosts]
