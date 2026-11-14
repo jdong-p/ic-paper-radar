@@ -123,7 +123,13 @@ CSS = """
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 -apple-system,BlinkMacSystemFont,
 "Segoe UI",Inter,Roboto,sans-serif}a{color:var(--accent)}code{background:var(--chip);padding:0 .3em;border-radius:4px;font-size:.92em}
 header.bar{position:sticky;top:0;z-index:20;background:var(--bg);border-bottom:1px solid var(--line);padding:10px 16px;
-display:flex;flex-wrap:wrap;gap:8px;align-items:center}header.bar h1{font-size:17px;margin:0 12px 0 0;max-width:min(60vw,560px);
+display:flex;flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none;white-space:nowrap;
+gap:8px;align-items:center}header.bar::-webkit-scrollbar{display:none}header.bar>*{flex:none}
+header.bar .peers>.menu{position:fixed;top:auto;left:auto}.btn.setup-hl{background:var(--accent);color:#fff;border-color:var(--accent);
+font-weight:700;box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 35%,transparent)}
+.emptycta{text-align:center;padding:28px 12px}.emptycta .btn{display:inline-block;margin-top:10px;font-size:15px;padding:9px 16px;text-decoration:none;white-space:normal}
+header.bar a.btn{text-decoration:none}
+header.bar h1{font-size:17px;margin:0 12px 0 0;max-width:min(60vw,560px);
 overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .btn{border:1px solid var(--line);background:var(--card);color:var(--fg);border-radius:8px;padding:5px 10px;cursor:pointer;
 font:inherit;font-size:13.5px;white-space:nowrap}.btn:hover{border-color:var(--accent)}.btn.primary{background:var(--accent);
@@ -195,6 +201,13 @@ table.papers tr.empty td{display:block}
 
 JS_COMMON = r"""
 const LS = 'paper_radar_marks_v1';
+document.addEventListener('toggle', e => {
+  const d = e.target;
+  if (!d.matches || !d.matches('header.bar details.peers') || !d.open) return;
+  const m = d.querySelector('.menu'), r = d.querySelector('summary').getBoundingClientRect();
+  if (innerWidth > 768) { m.style.left = Math.max(8, Math.min(r.left, innerWidth - 280)) + 'px'; }
+  m.style.top = (r.bottom + 4) + 'px';
+}, true);
 const PAGE = JSON.parse(document.getElementById('radar-data').textContent);
 // the domain preset's evidence badge (presets.py, v3.0); the values stay si / sim
 const BADGE = PAGE.badge || {si_icon: '✅', sim_icon: '⚠️ sim', si: 'Silicon-Verified', sim: 'Simulation-Only', view: '🔬 Silicon-Verified Only', head: '🔬 Silicon'};
@@ -857,7 +870,12 @@ function render() {
     html = rows.map(rowHtml).join('');
   }
   document.getElementById('nrows').textContent = n;
-  document.getElementById('tbody').innerHTML = html || '<tr class="empty"><td colspan="8" class="muted">No papers match.</td></tr>';
+  document.getElementById('tbody').innerHTML = html || (P.length || PAGE.readonly
+    ? '<tr class="empty"><td colspan="8" class="muted">No papers match.</td></tr>'
+    : '<tr class="empty"><td colspan="8" class="emptycta">📭 <b>No papers in the store yet.</b><br>Set up your pillars, keywords and '
+      + 'private data repo, then run the radar from the Control Center.'
+      + (PAGE.welcome ? ' (See the 👋 banner above.)' : '<br><a class="btn primary" href="STARTUP.html">⚙️ Open Setup &amp; '
+         + 'Control Center (STARTUP.html) →</a>') + '</td></tr>');
   // touchscreens have no hover: the selected pillar's full name as a line above the list
   const px = view === 'weekly' && PILLARS.find(x => x.k === wsel), pn = document.getElementById('pillarnote');
   pn.classList.toggle('on', !!px); pn.textContent = px ? '📌 ' + px.name : '';
@@ -946,20 +964,25 @@ def write_dashboard(store, cfg, path, peers=()):
     welcome = (f"""<div class="welcome">👋 <b>Welcome to IC Paper Radar!</b> No research pillars are configured yet.
 Open <code>README.md</code> to configure your research domains with AI"""
                + (f", or use the search bar below to browse the {n_store:,} IC papers in your store." if n_store else ".")
-               + "</div>" if data["welcome"] else "")
+               + " The Control Center sets your pillars, keywords, authors and private data repo, and runs the radar."
+               + CTA + "</div>" if data["welcome"] else "")
     if not n_store:  # the same tip briefing.py prints
-        welcome += f'<div class="welcome">💡 {html.escape(fetcher.STORE_TIP)}</div>'
+        welcome += (f'<div class="welcome">💡 {html.escape(fetcher.STORE_TIP)}'
+                    + ("" if data["welcome"] else CTA) + '</div>')
     body = welcome + _dash_body(data["generated"], '<a href="INDEX.md">INDEX.md</a>',
                                 "Click a row for the full digest. Clicks are kept in this browser; <b>💾 Save Marks</b> "
                                 "sends them to the Radar (curation_marks.json in output/ or Downloads), applied on the next "
                                 "run or <code>briefing.py --sync</code>.")
-    Path(path).write_text(_page("IC Paper Radar — Dashboard", "", _bar("📡 IC Paper Radar", extra=TAGS_BTN + _peer_links(peers) + SETUP_BTN),
+    setup = (SETUP_BTN.replace('class="btn"', 'class="btn setup-hl"')  # empty or [SETUP REQUIRED]: the way in
+             if not recs or data["welcome"] else SETUP_BTN)
+    Path(path).write_text(_page("IC Paper Radar — Dashboard", "", _bar("📡 IC Paper Radar", extra=setup + _peer_links(peers) + TAGS_BTN),
                                 body, data, DASH_JS), encoding="utf-8")
     return len(recs)
 
 
+CTA = ('<br><a class="btn primary" href="STARTUP.html" style="display:inline-block;margin-top:10px;text-decoration:none;white-space:normal">⚙️ Open Setup &amp; Control Center (STARTUP.html) →</a>')
 SEARCH_HINT = "Search title, author, venue, numbers, 🏷️ notes (e.g. 'SAR', 'PLL', 'nW', 'ISSCC')…"
-SETUP_BTN = ('<a class="btn sec" href="STARTUP.html" title="Setup & Control Center: pillars, keywords, authors, '
+SETUP_BTN = ('<a class="btn" id="setupbtn" href="STARTUP.html" title="Setup & Control Center: pillars, keywords, authors, '
              'anchors, sharing and the private data repo; run the radar from the browser">⚙️ Setup &amp; Manage</a>')
 TAGS_BTN = ('<button id="tagsbtn" class="btn sec" onclick="toggleTags()" title="Show every row\'s tags '
             '(week, catch-up, anchor, 📈, topic) or collapse them into a +N pill">🏷️ Tags</button>')
@@ -1062,6 +1085,17 @@ def write_peer_dashboards(store, cfg, log=print):
 
 
 def write_all(store, cfg, log=print):
+    try:
+        _write_pages(store, cfg, log)
+    finally:  # the Setup & Control Center next to the dashboard (control_center.py, v2.21), whatever happened above
+        try:
+            import control_center
+            control_center.write_startup(cfg, log)
+        except Exception as e:
+            log(f"STARTUP.html not written: {e}")
+
+
+def _write_pages(store, cfg, log=print):
     root = Path(cfg["paths"]["onedrive_root"])
     peers = write_peer_dashboards(store, cfg, log)
     n = write_dashboard(store, cfg, root / "DASHBOARD.html", peers)
@@ -1073,11 +1107,6 @@ def write_all(store, cfg, log=print):
     write_phone_link(cfg)
     log(f"HTML: DASHBOARD.html ({n} papers) + {pages} report pages"
         + "".join(f" + Peers/DASHBOARD_{p}.html ({k})" for p, _, k in peers))
-    try:  # the Setup & Control Center next to the dashboard (control_center.py, v2.21)
-        import control_center
-        control_center.write_startup(cfg, log)
-    except Exception as e:
-        log(f"STARTUP.html not written: {e}")
 
 
 def write_phone_link(cfg):
