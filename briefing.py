@@ -358,7 +358,7 @@ def render(week, friday, today, vpn, papers, also, catch, beyond, notes, edges, 
             hits = ", ".join(f"**{h}**" if h.startswith(("vip_author", "cites an anchor")) else h
                              for h in p["hits"] if h not in ("silicon_verified", "simulation_only"))
             when = p["first_seen"][5:] if added_col == "Added" else p["published"]
-            out.append(f"| {numbered.replace('#', '') + str(i)} | {p['score']} | {BADGE[_verif(p)] if presets.key(cfg) == "ic_ece" else presets.icon(_verif(p), cfg)} | {p['venue']} "
+            out.append(f"| {numbered.replace('#', '') + str(i)} | {p['score']} | {BADGE[_verif(p)] if presets.key(cfg) == 'ic_ece' else presets.icon(_verif(p), cfg)} | {p['venue']} "
                        f"| [{p['title']}](https://doi.org/{p['doi']}){new} | {cites} | {when} | {hits} |")
         return out
 
