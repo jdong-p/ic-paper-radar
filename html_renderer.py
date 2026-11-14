@@ -21,6 +21,7 @@ from env_guard import ensure_minisforum_env
 ensure_minisforum_env()
 import catalog
 import curation
+import presets
 import fetcher
 import relations
 import store as store_mod
@@ -195,6 +196,8 @@ table.papers tr.empty td{display:block}
 JS_COMMON = r"""
 const LS = 'paper_radar_marks_v1';
 const PAGE = JSON.parse(document.getElementById('radar-data').textContent);
+// the domain preset's evidence badge (presets.py, v3.0); the values stay si / sim
+const BADGE = PAGE.badge || {si_icon: '✅', sim_icon: '⚠️ sim', si: 'Silicon-Verified', sim: 'Simulation-Only', view: '🔬 Silicon-Verified Only', head: '🔬 Silicon'};
 // a collaborator's radar (Peers/DASHBOARD_<peer>.html, v2.19): read-only, so nothing on it can reach this radar's
 // own store: no browser queue, no live sync, no file export; the buttons show the peer's choices, disabled
 const RO = !!PAGE.readonly;
@@ -377,12 +380,12 @@ function cycleSi(doi) {
   const next = {'': 'si', si: 'sim', sim: ''}[siOf(doi)];
   setMark(doi, fmtMark(stageOf(doi), citedOf(doi), next));
 }
-function siBadge(doi, auto) { return {si: '✅', sim: '⚠️ sim'}[siOf(doi)] || auto; }
+function siBadge(doi, auto) { return {si: BADGE.si_icon, sim: BADGE.sim_icon}[siOf(doi)] || auto; }
 function siCell(doi, auto, tag) {
   const user = !!siOf(doi), b = siBadge(doi, auto);
-  return `<${tag} class="btn sibtn ${b==='✅'?'ok':'warn'} ${user?'user':''}" ${RO?'disabled':''} onclick="event.stopPropagation();cycleSi('${doi}')" ` +
-    `title="${user ? (RO ? 'Set by ' + esc(PAGE.peer) : 'Set by you') + ' after reading the PDF' : 'Automatic guess (' + esc(auto) + ')'} · Click to set Silicon-Verified / ` +
-    `Simulation-Only (User confirmed) / back to auto">${b}${user ? '<sup>✓</sup>' : ''}</${tag}>`;
+  return `<${tag} class="btn sibtn ${b===BADGE.si_icon?'ok':'warn'} ${user?'user':''}" ${RO?'disabled':''} onclick="event.stopPropagation();cycleSi('${doi}')" ` +
+    `title="${user ? (RO ? 'Set by ' + esc(PAGE.peer) : 'Set by you') + ' after reading the PDF' : 'Automatic guess (' + esc(auto) + ')'} · Click to set ${esc(BADGE.si)} / ` +
+    `${esc(BADGE.sim)} (User confirmed) / back to auto">${b}${user ? '<sup>✓</sup>' : ''}</${tag}>`;
 }
 function pending() { return Object.keys(store).length + Object.keys(nstore).length; }
 function curButtons(doi) {
@@ -606,7 +609,7 @@ let wkSel = WEEKS.length ? WEEKS[0].week : '';
 // primary views stay on one row; the rest live in the 📁 More Views folder
 const FILTERS = [['all','All'],['candidate','📋 Candidate'],['selected','✅ Selected'],['cite','⭐ To Cite'],
   ['weekly','📅 Weekly Brief'],['topic','🔎 Topic Dives'],
-  ['silicon','🔬 Silicon-Verified Only'],['pinned','🏛️ Anchors & Pinned'],['lineage','📈 Journal Extensions'],['archived','🗄️ Archived']];
+  ['silicon', BADGE.view],['pinned','🏛️ Anchors & Pinned'],['lineage','📈 Journal Extensions'],['archived','🗄️ Archived']];
 const TIERED = {weekly: true, topic: true};  // views with a tier-2 and a tier-3 bar
 const VIEW_TITLE = {weekly: 'The radar\'s own papers: weekly + catch-up + pinned, by pillar, and 🌍 Beyond IEEE',
   topic: 'Papers from your --topic deep-dives, one banner per dive'};
@@ -706,7 +709,7 @@ function matches(p) {
   // the radar views show core papers (weekly / catch-up / pinned) and reviewed ones, never unreviewed topic-dive papers
   const radar = (p.core || st!=='normal' || c) && st!=='archived';
   const ok = TIERED[view] ? inTier2(p, view, wsel, topicSel) && stageOk(p, sub) : {all: true, candidate: st==='normal' && p.core,
-    selected: st==='selected', cite: c, archived: st==='archived', silicon: siBadge(p.doi, p.silicon_auto)==='✅' && radar,
+    selected: st==='selected', cite: c, archived: st==='archived', silicon: siBadge(p.doi, p.silicon_auto)===BADGE.si_icon && radar,
     pinned: !!p.pin && st!=='archived', lineage: p.lineage && radar}[view];
   if (!ok) return false;
   if (!q) return true;
@@ -887,8 +890,8 @@ function rowHtml(p) {
       `<div class="muted">${esc(p.authors)} ${tags}</div></td><td class="count c-score">${p.score}</td>` +
       `<td class="c-si">${siCell(p.doi, p.silicon_auto, 'button')}</td><td class="hide-sm c-pillar">${pillarPill(p)}</td>` +
       `<td class="hide-sm muted c-key">${esc(p.key)}</td><td class="c-cur" data-cur="${p.doi}">${curButtons(p.doi)}</td></tr>`;
-    const det = isOpen ? `<tr class="detail"><td colspan="8"><p class="muted">🔬 Silicon: ${siCell(p.doi, p.silicon_auto, 'button')} ` +
-      `click to cycle ✅ Silicon-Verified → ⚠️ Simulation-Only → automatic (${esc(p.silicon_auto)})</p>` +
+    const det = isOpen ? `<tr class="detail"><td colspan="8"><p class="muted">${esc(BADGE.head)}: ${siCell(p.doi, p.silicon_auto, 'button')} ` +
+      `click to cycle ${BADGE.si_icon} ${esc(BADGE.si)} → ${BADGE.sim_icon} ${esc(BADGE.sim)} → automatic (${esc(p.silicon_auto)})</p>` +
       `<p class="muted noteline">🏷️ Tech note: <input class="note" data-doi="${p.doi}" value="${escA(note)}" maxlength="200" ${RO?'readonly':''} ` +
       `placeholder="Key technique / takeaway (e.g. gate-leakage PTAT, floating inverter amp)…" onkeydown="noteKey(event, this)" ` +
       `onblur="saveNote(this)"> <span class="nstate" data-nstate="${p.doi}">${noteState(p.doi)}</span></p>${p.lineage_html}${p.digest_html}` +
@@ -938,7 +941,7 @@ def write_dashboard(store, cfg, path, peers=()):
             "pillars": [{"k": f"p{i}", "n": i, "short": catalog.pillar_short(i, n), "name": f"Pillar {i}: {n}"}  # tier 2 of 📅 Weekly Brief
                         for i, n in enumerate(cfg.get("pillars") or [], 1)],
             "weeks": weekly_reports(cfg), "sync": curation.page_sync_config(cfg),
-            "welcome": not fetcher.pillars_ready(cfg)}
+            "welcome": not fetcher.pillars_ready(cfg), "badge": presets.badge(cfg)}
     n_store = store.db.execute("SELECT COUNT(*) FROM papers").fetchone()[0]
     welcome = (f"""<div class="welcome">👋 <b>Welcome to IC Paper Radar!</b> No research pillars are configured yet.
 Open <code>README.md</code> to configure your research domains with AI"""
@@ -1038,7 +1041,8 @@ def write_peer_dashboards(store, cfg, log=print):
                 "notes": {r["doi"]: r["note"] for r in recs if r["note"]},
                 "pillars": [{"k": f"p{i}", "n": i, "short": catalog.pillar_short(i, name, own=False), "name": name}
                             for i, name in enumerate(names, 1)],
-                "sync": {"hosts": [], "port": 0, "token": "", "timeout": 0}}  # no token: this page can't write
+                "sync": {"hosts": [], "port": 0, "token": "", "timeout": 0},  # no token: this page can't write
+                "badge": presets.badge(cfg)}
         upd = f" · updated {html.escape(str(info['updated'])[:16].replace('T', ' '))}" if info.get("updated") else ""
         body = (f'<div class="peerbanner">👤 Viewing <b>{html.escape(peer)}</b>\'s Radar (Read-Only){upd} · '
                 f'<a href="../DASHBOARD.html">← Back to My Dashboard</a></div>'

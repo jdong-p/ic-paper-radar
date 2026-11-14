@@ -48,6 +48,13 @@ Instructions for an AI agent (Claude Code) opened in this folder:
   `.command` or `python briefing.py --gui` (control_center.py, `output/STARTUP.html`). It edits the same
   `config.json` keys listed above (plus `data_repo` sharing and `arxiv`), writing only the changed ones.
   It reports secrets as yes/no flags only. Keep the `--gui` server on 127.0.0.1, behind its per-launch key.
+- Data repos (v3.0): a user owns their own private data repo. Create it with
+  `python briefing.py --init-data-repo <owner/name>` (needs `gh` signed in, or an empty private repo made on
+  github.com). Repos shared with them for reading go in `data_repo.read_repos`; `--pull-data-repo` reads them
+  and never pushes. Keep `data_repo.remote_url` and `read_repos` blank in `config.example.json` (the PR audit
+  checks); they belong in the user's `config.json`. Never put a token in a repo URL.
+- `domain_preset` (`ic_ece`, `bio_med`, `chem_mat`, `general_eng`; `presets.py`) sets the evidence badge and
+  can load starter venues; PubMed / bioRxiv venues use `"source": "pubmed" | "biorxiv" | "medrxiv"`.
 - Reports and digests are written in English.
 - If `paper_store.sqlite` is missing or empty, say so: the user can request the pre-built database from
   the author (README.md, Step 1) or build one with weekly runs and `--topic` dives.

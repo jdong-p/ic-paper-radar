@@ -182,8 +182,29 @@ def _oa_query(params, cfg):
         raise
 
 
+_AUTHORS = {}  # doi → OpenAlex ids of the first and last author, fetched in batches (v3.0)
+
+
+def _prefetch_authors(papers, cfg, log=print):
+    """One OpenAlex request per OA_BATCH (40) journal papers instead of one per paper (fetcher.openalex_by_doi)."""
+    todo = [p["doi"] for p in papers if p["doi"] not in _AUTHORS]
+    if not todo:
+        return
+    try:
+        works = fetcher.openalex_by_doi(todo, cfg, "id,doi,authorships", log)
+    except Exception as e:  # budget gone: the per-paper path below reports it the usual way
+        log(f"  [lineage/authors] {e}")
+        return
+    for d in todo:
+        au = (works.get(d.lower()) or {}).get("authorships") or []
+        ids = [((a.get("author") or {}).get("id") or "").rsplit("/", 1)[-1] for a in (au[:1] + au[-1:])]
+        _AUTHORS[d] = list(dict.fromkeys(i for i in ids if i))
+
+
 def _author_ids(J, cfg):
-    """OpenAlex author ids of J's first and last author (one plain request by DOI)."""
+    """OpenAlex author ids of J's first and last author (batched by _prefetch_authors, else one request)."""
+    if J["doi"] in _AUTHORS:
+        return _AUTHORS[J["doi"]]
     res = _oa_query({"filter": f"doi:{J['doi']}", "per-page": 1}, cfg)
     au = (res[0].get("authorships") or []) if res else []
     ids = [((a.get("author") or {}).get("id") or "").rsplit("/", 1)[-1] for a in (au[:1] + au[-1:])]
@@ -262,6 +283,8 @@ def update_lineage(papers, cfg, store, today, log=print, recheck_days=0):
     without the search isn't marked checked, so the next run searches it."""
     journals, confs = set(cfg["lineage"]["journals"]), set(cfg["lineage"]["conferences"])
     found, search_ok, online = 0, True, True
+    _prefetch_authors([p for p in papers if p["venue"] in journals and not p.get("lineage") and not (
+        p.get("lineage_checked") and (today - date.fromisoformat(p["lineage_checked"])).days <= recheck_days)], cfg, log)
     for p in papers:
         last = p.get("lineage_checked")
         if p.get("lineage") or (last and (today - date.fromisoformat(last)).days <= recheck_days):

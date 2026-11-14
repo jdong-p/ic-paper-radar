@@ -166,7 +166,10 @@
 
     "data_repo": {"adopt_external": true, "friday_sync": true, "peer_id": "", "share_curation": true, "share_notes": true,
                                 "_peer_note": "v2.19: --sync-data-repo also writes this radar's curation overlay (pillar names; per curated paper its pillar, score, stage, cite, Si call, note, status) to peers/<peer_id>.json in the shared repo, and reads the others' into Peers/DASHBOARD_<peer>.html (read-only). peer_id: empty = the clone's git user.name. share_curation false = publish nothing; share_notes false = keep the notes private.",
-                                "_note": "Optional shared corpus repo for collaborators (data_repo.py): python briefing.py --sync-data-repo, and after every Friday finalize when a clone exists. adopt_external: merged papers scoring >= min_score join your archive."},
+                                "_note": "Optional shared corpus repo for collaborators (data_repo.py): python briefing.py --sync-data-repo, and after every Friday finalize when a clone exists. adopt_external: merged papers scoring >= min_score join your archive.",
+                                "remote_url": "",
+                                "read_repos": [],
+                                "_v3_note": "v3.0, your own private data repo: python briefing.py --init-data-repo <owner/name> (or STARTUP.html) creates or clones it, pushes the protocol files and sets remote_url (a new computer then clones it automatically). read_repos: data repos collaborators shared with you for reading (owner/name, URL or folder); --pull-data-repo merges them and never pushes."},
 
     "paths": {
         "_note": "portable_mode: every output goes to ./output (paths.py). marks_extra_dirs: where the dashboard's '💾 Save Marks' downloads land. data_repo_dir: your clone of the shared corpus repo; empty = the sibling folder ../ic-paper-radar-data (~ allowed).",
@@ -196,5 +199,11 @@
         "command": "claude",
         "model": "",
         "timeout_s": 900
+    },
+    "_v3_note": "v3.0: domain_preset picks the field (ic_ece = IC & solid-state circuits, bio_med, chem_mat, general_eng; presets.py or STARTUP.html, Domain preset). deployment: local (127.0.0.1 only) or mesh_lan (the --gui server also listens on the private-LAN / Tailscale IPs in sync_server.hosts). scoring: the v3.0 boosters (scorer.py), each shown in a paper's hits: title_boost (a keyword in the title counts title_multiplier times), coupling (the paper's references share >= coupling_min_shared works with one of your anchors / pinned / selected / cited papers), taste (-2..+4 from a Naive Bayes over your own marks, once you have taste_min_examples selected/cited and as many archived papers; taste false = off).",
+    "domain_preset": "ic_ece",
+    "deployment": "local",
+    "scoring": {
+        "title_multiplier": 1.5, "coupling_bonus": 3, "coupling_min_shared": 2, "taste_min_examples": 8, "taste": true
     }
 }

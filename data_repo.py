@@ -130,14 +130,204 @@ def _identity(repo, me):
     return ["-c", f"user.name={me}", "-c", f"user.email={me}@ic-paper-radar.local"]
 
 
-def check_clone(repo):
-    """None if `repo` is a clone of the data repo, else the reason it isn't."""
+def check_clone(repo, cfg=None):
+    """None if `repo` is a clone of a data repo, else the reason it isn't. A data repo: origin names
+    ic-paper-radar-data, or the clone holds the MARKER file (v3.0 protocol, any repo name), or its origin is
+    data_repo.remote_url."""
     if not (repo / ".git").exists():
         return f"no clone at {repo}"
     origin = _git(repo, "remote", "get-url", "origin", check=False).stdout.strip()
-    if REMOTE_MARK not in origin:
-        return f"{repo} is not a clone of {REMOTE_MARK} (origin: {origin or 'none'})"
-    return None
+    own = ((cfg or {}).get("data_repo") or {}).get("remote_url") or ""
+    if REMOTE_MARK in origin or (repo / MARKER).exists() or (own and _norm_url(own) == _norm_url(origin)):
+        return None
+    return f"{repo} is not a data repo (origin: {origin or 'none'}; no {MARKER} file)"
+
+
+# ---------- v3.0: user-owned private data repos (protocol v1) ----------
+# Anyone can own one: `briefing.py --init-data-repo <owner/name | URL>` creates (gh) or clones it, writes the
+# files below and pushes main. A repo is a data repo when its origin names ic-paper-radar-data (the original
+# one), when it holds the MARKER file, or when its origin is this radar's data_repo.remote_url; nothing else is
+# ever reset. data_repo.read_repos lists more data repos (URLs or local folders) that collaborators shared for
+# reading: they are pulled (never pushed) into <data_repo_dir>_peers/<slug> and merged like the primary one.
+MARKER = "IC_PAPER_RADAR_DATA"
+PROTOCOL = 1
+README = """# IC Paper Radar: shared corpus (private data repo)
+
+This private repository is an **IC Paper Radar data repo** (protocol v{protocol}). The public code
+(`data_repo.py` of IC Paper Radar) defines it; nobody edits these files by hand.
+
+| File | What it is |
+|---|---|
+| `paper_store_clean_share.sqlite` | The clean shared corpus: papers, abstracts, digests (no marks, notes, pillars or scores). Binary: Git never merges it. Each radar fetches it, merges it into its own store and exports the union back. |
+| `peers/<peer_id>.json` | One curation overlay per collaborator (pillar names; per curated paper its pillar, score, stage, ⭐, note). |
+| `{marker}` | Marks this repository as a data repo, so `--sync-data-repo` may reset its clone. |
+
+- **Sync (read and write):** `python briefing.py --sync-data-repo` or 🔄 Full Sync in STARTUP.html. The owner
+  and collaborators with write access share one corpus.
+- **Read only:** give a collaborator read access (Settings → Collaborators). They add this repo's URL to
+  `"data_repo": {{"read_repos": [...]}}` in their config.json (or in STARTUP.html), and
+  `python briefing.py --pull-data-repo` merges it into their radar and shows your radar under 👥 Peers.
+"""
+REPO_URL_RX = re.compile(r"^(https://[A-Za-z0-9.-]+(:\d+)?/|git@[A-Za-z0-9.-]+:)[\w.-]+/[\w.-]+?(\.git)?/?$")
+SLUG_RX = re.compile(r"^[A-Za-z0-9][\w.-]*/[\w.-]+$")
+
+
+def _norm_url(u):
+    """https://github.com/a/b(.git)(/) and git@github.com:a/b(.git) → 'github.com/a/b' (lower case)."""
+    u = str(u or "").strip().lower().removesuffix("/").removesuffix(".git")
+    u = re.sub(r"^git@([^:]+):", r"\1/", u)
+    return re.sub(r"^https?://", "", u)
+
+
+def repo_url(spec):
+    """'owner/name' → https://github.com/owner/name.git; a clone URL (no user name or token in it) as it is;
+    else ValueError. A local folder (an existing path) is returned as a resolved path string."""
+    s = str(spec or "").strip()
+    if SLUG_RX.match(s) and not Path(s).expanduser().exists():
+        return f"https://github.com/{s}.git"
+    if REPO_URL_RX.match(s):
+        return s
+    p = Path(s).expanduser()
+    if s and p.exists():
+        return str(p.resolve())
+    raise ValueError(f"not a GitHub owner/name, a clone URL (https://… or git@…, without user name or token) or a "
+                     f"folder: {s!r}")
+
+
+def _origin(repo):
+    return _git(repo, "remote", "get-url", "origin", check=False).stdout.strip()
+
+
+def ensure_clone(cfg, log=print):
+    """Clone data_repo.remote_url into paths.data_repo_dir when there is no clone yet (a new computer)."""
+    repo, url = repo_dir(cfg), ((cfg.get("data_repo") or {}).get("remote_url") or "").strip()
+    if (repo / ".git").exists() or not url:
+        return repo
+    if repo.exists() and any(repo.iterdir()):
+        raise RuntimeError(f"{repo} exists and isn't a clone: move it away or set paths.data_repo_dir")
+    log(f"Cloning data_repo.remote_url into {repo} ...")
+    _git(HERE, "clone", "--", repo_url(url), str(repo))
+    return repo
+
+
+def _peers_cache(cfg):
+    return Path(str(repo_dir(cfg)) + "_peers")
+
+
+def read_repo_dirs(cfg, log=print):
+    """[(spec, folder)] for data_repo.read_repos: a local folder that holds the shared file is read in place (never
+    touched); a URL, or a local git repo (e.g. a bare one), is cloned into <data_repo_dir>_peers/<slug> the first
+    time, then fetched + reset (that cache is this radar's own)."""
+    out = []
+    for spec in (cfg.get("data_repo") or {}).get("read_repos") or []:
+        try:
+            src = repo_url(spec)
+            if Path(src).exists() and (Path(src) / DB_NAME).exists() and not REPO_URL_RX.match(str(spec).strip()):
+                out.append((spec, Path(src)))
+                continue
+            d = _peers_cache(cfg) / (_slug(_norm_url(src).replace("/", "_")) or "repo")
+            if (d / ".git").exists():
+                if _norm_url(_origin(d)) != _norm_url(src):
+                    raise RuntimeError(f"{d} is a clone of another repo")
+                _git(d, "fetch", "origin")
+                _git(d, "reset", "--hard", "origin/HEAD" if _git(d, "rev-parse", "--verify", "-q", "origin/HEAD",
+                                                                   check=False).returncode == 0 else "origin/main")
+            else:
+                d.parent.mkdir(parents=True, exist_ok=True)
+                _git(HERE, "clone", "--", src, str(d))
+                if not (d / DB_NAME).exists() and _git(d, "rev-parse", "--verify", "-q", "origin/main", check=False).returncode == 0:
+                    _git(d, "checkout", "-q", "-B", "main", "origin/main")  # its HEAD names a branch it doesn't have
+            out.append((spec, d))
+        except Exception as e:
+            log(f"  read repo {spec}: skipped ({e})")
+    return out
+
+
+def pull_read_repos(store, cfg, me, adopt=None, log=print):
+    """Every data_repo.read_repos entry: its peers/*.json → peer_curation, its shared file merged into this store.
+    Read only. Returns {spec: {'papers', 'new', 'enriched', 'peers'}}."""
+    out = {}
+    for spec, d in read_repo_dirs(cfg, log):
+        peers = import_peers(store, d, me, log) if (d / PEERS_DIR).exists() else {}
+        st = {"new": 0, "enriched": 0}
+        db = d / DB_NAME
+        if db.exists():
+            st = store_mod.merge_store(store, db, log=lambda m: None)
+        out[spec] = {"papers": _count(db), "new": st["new"], "enriched": st["enriched"], "peers": peers}
+        log(f"  read repo {spec}: {out[spec]['papers']} papers ({st['new']} new, {st['enriched']} enriched)"
+            + (", peers " + ", ".join(f"{p} ({n} rows)" for p, n in peers.items()) if peers else ""))
+    if out and adopt and (cfg.get("data_repo") or {}).get("adopt_external", True):
+        log(f"  read repos: {adopt(store, cfg)} adopted into the archive (≥ min_score)")
+    return out
+
+
+def _write_protocol_files(repo):
+    (repo / MARKER).write_text(json.dumps({"protocol": PROTOCOL, "kind": "ic-paper-radar-data"}) + "\n", encoding="utf-8")
+    (repo / ".gitattributes").write_text("*.sqlite binary\n*.json text eol=lf\n*.md text eol=lf\n", encoding="utf-8")
+    (repo / "README.md").write_text(README.format(protocol=PROTOCOL, marker=MARKER), encoding="utf-8")
+
+
+def init_repo(spec, store, store_path, cfg, secrets=(), log=print):
+    """--init-data-repo <owner/name | URL | folder> (STARTUP.html ✨ Create / Init My Private Repo):
+      1. with `gh` signed in and an owner/name: `gh repo create owner/name --private` if it doesn't exist yet;
+      2. clone it into paths.data_repo_dir (default ../ic-paper-radar-data);
+      3. an empty repo gets the protocol files (MARKER, .gitattributes, README.md), this radar's
+         paper_store_clean_share.sqlite and peers/<peer_id>.json, one commit, and `git push -u origin main`;
+         a repo that already holds a corpus is just connected;
+      4. config.json: data_repo.remote_url = the URL (so another computer clones it automatically).
+    Returns {'url', 'dir', 'created', 'initialized'}; raises RuntimeError / ValueError."""
+    import shutil as sh
+    url = repo_url(spec)
+    repo = repo_dir(cfg)
+    created = False
+    if (repo / ".git").exists():
+        if _norm_url(_origin(repo)) != _norm_url(url):
+            raise RuntimeError(f"{repo} is already a clone of {_origin(repo) or 'another repo'}: set paths.data_repo_dir "
+                               "to another folder for a second data repo, or use data_repo.read_repos to read it")
+    else:
+        slug = str(spec).strip()
+        if SLUG_RX.match(slug) and not Path(slug).expanduser().exists() and sh.which("gh"):
+            if subprocess.run(["gh", "repo", "view", slug], capture_output=True, text=True).returncode:
+                log(f"Creating the private GitHub repo {slug} (gh) ...")
+                r = subprocess.run(["gh", "repo", "create", slug, "--private", "--description",
+                                    "IC Paper Radar shared corpus (private data repo)"], capture_output=True, text=True)
+                if r.returncode:
+                    raise RuntimeError(f"gh repo create failed: {(r.stderr or r.stdout).strip()[-300:]}")
+                created = True
+        if repo.exists() and any(repo.iterdir()):
+            raise RuntimeError(f"{repo} exists and isn't empty: choose another paths.data_repo_dir")
+        log(f"Cloning {url} into {repo} ...")
+        r = _git(HERE, "clone", "--", url, str(repo), check=False)
+        if r.returncode:
+            raise RuntimeError(f"git clone failed: {(r.stderr or r.stdout).strip()[-300:]} (create the empty private repo "
+                               "on github.com first, or install the GitHub CLI `gh` and sign in)")
+    has_commit = _git(repo, "rev-parse", "--verify", "-q", "HEAD", check=False).returncode == 0
+    initialized = False
+    if not has_commit or not (repo / DB_NAME).exists():
+        me = peer_id(cfg, repo)
+        log(f"Initializing the data repo (protocol v{PROTOCOL}) as {me} ...")
+        _write_protocol_files(repo)
+        kw = {}
+        try:
+            import arxiv_source
+            kw["skip_arxiv"] = arxiv_source.share_skip(cfg)
+        except ImportError:
+            pass
+        s = store_mod.export_clean_share_db(store_path, repo / DB_NAME, secrets=secrets, **kw)
+        log(f"  exported {s['papers']} papers into {DB_NAME}")
+        if (cfg.get("data_repo") or {}).get("share_curation", True):
+            write_overlay(store, cfg, repo, me, secrets)
+        _git(repo, "add", "-A")
+        _git(repo, *_identity(repo, me), "commit", "-m", f"Initialize IC Paper Radar data repo (protocol v{PROTOCOL})")
+        _git(repo, "branch", "-M", "main")
+        r = _git(repo, "push", "-u", "origin", "main", check=False)
+        if r.returncode:
+            raise RuntimeError(f"push failed: {(r.stderr or r.stdout).strip()[-300:]}")
+        initialized = True
+        log("  pushed main")
+    else:
+        log("  the repo already holds a corpus: connected (run 📥 Read / --pull-data-repo next)")
+    return {"url": url, "dir": str(repo), "created": created, "initialized": initialized}
 
 
 def import_peers(store, repo, me, log=print):
@@ -230,13 +420,19 @@ def _round(store, store_path, cfg, repo, me, adopt, secrets, push, log):
     return True, s["papers"], peers
 
 
-def pull(store, cfg, adopt=None, log=print):
+def pull_only(store, cfg, adopt=None, log=print):
     """Read only (briefing.py --pull-data-repo, STARTUP.html's 📥 Read from Private Repo): steps 1 and 2 of a sync.
     Fetch + reset to origin/main, every other peer's overlay into peer_curation, the shared file merged into this
-    store (+ adopt). Nothing is exported, written into the clone or pushed. Returns {'papers', 'new', 'enriched',
-    'adopted', 'peers'}; raises RuntimeError on any failure."""
-    repo = repo_dir(cfg)
-    why = check_clone(repo)
+    store (+ adopt); then every data_repo.read_repos entry the same way (v3.0). Nothing is exported, written into
+    a clone or pushed. Without a primary clone (and no remote_url) only the read repos are read. Returns
+    {'papers', 'new', 'enriched', 'adopted', 'peers', 'read_repos'}; raises RuntimeError on any failure."""
+    repo = ensure_clone(cfg, log)
+    why = check_clone(repo, cfg)
+    if why and (cfg.get("data_repo") or {}).get("read_repos"):
+        me = peer_id(cfg, None)
+        log(f"No primary data repo ({why}): reading data_repo.read_repos only")
+        return {"papers": 0, "new": 0, "enriched": 0, "adopted": 0, "peers": {},
+                "read_repos": pull_read_repos(store, cfg, me, adopt, log)}
     if why:
         raise RuntimeError(why)
     me = peer_id(cfg, repo)
@@ -256,16 +452,20 @@ def pull(store, cfg, adopt=None, log=print):
             out["adopted"] = adopt(store, cfg)
             msg += f", {out['adopted']} adopted into the archive (≥ min_score)"
         log(msg)
+    out["read_repos"] = pull_read_repos(store, cfg, me, adopt, log)
     log("  read only: nothing exported or pushed (🔄 Full Sync / --sync-data-repo does that)")
     return out
+
+
+pull = pull_only  # v2.21 name
 
 
 def sync(store, store_path, cfg, adopt=None, secrets=(), push=True, log=print):
     """Steps 1–4 (see the module docstring); after a rejected push, a random PUSH_BACKOFF wait and a fresh
     round from step 1, up to PUSH_RETRIES times. The jitter keeps radars that collided from colliding again.
     Returns {'papers': n, 'peers': {peer_id: rows}}; raises RuntimeError on any failure."""
-    repo = repo_dir(cfg)
-    why = check_clone(repo)
+    repo = ensure_clone(cfg, log)
+    why = check_clone(repo, cfg)
     if why:
         raise RuntimeError(why)
     me = peer_id(cfg, repo)
@@ -273,8 +473,8 @@ def sync(store, store_path, cfg, adopt=None, secrets=(), push=True, log=print):
     attempts = 1 + PUSH_RETRIES
     for attempt in range(1, attempts + 1):
         done, n, peers = _round(store, store_path, cfg, repo, me, adopt, secrets, push, log)
-        if done:
-            return {"papers": n, "peers": peers}
+        if done:  # then the repos shared with this radar for reading (v3.0), never pushed
+            return {"papers": n, "peers": peers, "read_repos": pull_read_repos(store, cfg, me, adopt, log)}
         if attempt < attempts:
             wait = random.uniform(*PUSH_BACKOFF)
             log(f"  retry {attempt}/{PUSH_RETRIES} from step 1 in {wait:.1f} s")

@@ -17,6 +17,7 @@ import os
 import re
 import time
 import unicodedata
+import urllib.error
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
@@ -27,6 +28,7 @@ from pathlib import Path
 from env_guard import ensure_minisforum_env
 
 ensure_minisforum_env()
+import scorer  # v3.0 boosters (coupling, taste)
 HERE = Path(__file__).resolve().parent
 IEEE_URL = "https://ieeexploreapi.ieee.org/api/v1/search/articles?"
 
@@ -101,6 +103,170 @@ def _budget_gone(e):
         return getattr(e, "code", None) == 429 and int(e.headers.get("Retry-After") or 0) > 60
     except (TypeError, ValueError):
         return False
+
+
+# ---------- v3.0: batched OpenAlex lookups and conditional GETs ----------
+OA_BATCH = 40  # DOIs per OpenAlex request (filter=doi:a|b|…): one call instead of 40
+_STORE = None  # the store of the running collection (collect() sets it): HTTP validators live in its meta table
+
+
+def openalex_by_doi(dois, cfg, select, log=print):
+    """{doi: work} for many DOIs, OA_BATCH per request. A DOI OpenAlex doesn't know is simply missing. Raises
+    only when the daily budget is used up (the caller decides); other errors skip that chunk."""
+    out = {}
+    dois = [d for d in dict.fromkeys(str(x).lower() for x in dois if x) if "|" not in d and "," not in d]
+    sel = select if "doi" in select.split(",") else "doi," + select
+    for i in range(0, len(dois), OA_BATCH):
+        q = urllib.parse.urlencode({"filter": "doi:" + "|".join(dois[i:i + OA_BATCH]), "per-page": OA_BATCH,
+                                    "mailto": cfg["contact_email"], "select": sel})
+        try:
+            res = json.loads(_get(f"https://api.openalex.org/works?{q}", cfg))["results"]
+        except Exception as e:
+            if _budget_gone(e):
+                raise
+            log(f"  [openalex batch] {e}")
+            continue
+        for w in res:
+            out[(w.get("doi") or "").replace("https://doi.org/", "").lower()] = w
+    return out
+
+
+def _get_cached(url, cfg, opener=None, timeout=40):
+    """GET with HTTP validators: the ETag / Last-Modified of the last answer are kept in the store's meta
+    (http_cache:<url>) and sent back as If-None-Match / If-Modified-Since, so an unchanged feed answers
+    304 Not Modified at once; then this returns None (nothing new to parse). Without a store: a plain GET.
+    The new validators are kept only after the caller parsed the body (_cache_commit): a bot-challenge page
+    served instead of the feed must never mark the feed as "seen"."""
+    key = f"http_cache:{url}"
+    old = (_STORE.meta(key) if _STORE is not None else None) or {}
+    h = {"User-Agent": f"IC-Paper-Radar/3.0 (mailto:{cfg['contact_email']})"}
+    if old.get("etag"):
+        h["If-None-Match"] = old["etag"]
+    if old.get("last_modified"):
+        h["If-Modified-Since"] = old["last_modified"]
+    req = urllib.request.Request(url, headers=h)
+    try:
+        with (opener.open if opener else urllib.request.urlopen)(req, timeout=timeout) as r:
+            body, etag, lm = r.read(), r.headers.get("ETag"), r.headers.get("Last-Modified")
+    except urllib.error.HTTPError as e:
+        if e.code == 304:
+            return None
+        raise
+    if _STORE is not None and (etag or lm):
+        _PENDING[url] = {"etag": etag, "last_modified": lm}
+    return body
+
+
+_PENDING = {}  # url → validators of a response not parsed yet
+
+
+def _cache_commit(url):
+    """The body of `url` parsed fine: keep its validators for the next conditional GET."""
+    v = _PENDING.pop(url, None)
+    if v and _STORE is not None:
+        _STORE.meta(f"http_cache:{url}", v)
+
+
+# ---------- v3.0: other sources — NCBI PubMed E-utilities, bioRxiv / medRxiv ----------
+# A venue picks one with "source": "pubmed" | "biorxiv" | "medrxiv" (else Crossref by ISSN, + the IEEE API).
+EUTILS = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/"
+MONTHS = {m: i for i, m in enumerate(("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"), 1)}
+
+
+def _default_term(cfg):
+    """PubMed term from the strongest positive keywords (weight ≥ 3, at most 20): '"k1"[tiab] OR "k2"[tiab]'."""
+    pk = cfg.get("positive_keywords") or {}
+    kws = sorted((k for k, w in pk.items() if not k.startswith(("_", "re:")) and (w or 0) >= 3), key=lambda k: -pk[k])
+    return " OR ".join(f'"{k}"[tiab]' for k in kws[:20])
+
+
+def _pm_date(art):
+    for path in (".//ArticleDate", ".//PubDate"):
+        d = art.find(path)
+        if d is None or not d.findtext("Year"):
+            continue
+        y, m, day = d.findtext("Year"), (d.findtext("Month") or ""), d.findtext("Day")
+        m = int(m) if m.isdigit() else MONTHS.get(m[:3].lower())
+        return f"{y}-{m:02d}-{int(day):02d}" if m and day and day.isdigit() else (f"{y}-{m:02d}" if m else y)
+    return ""
+
+
+def _pubmed_record(art, v):
+    doi = next((e.text for e in art.iter("ArticleId") if e.get("IdType") == "doi" and e.text), None) or \
+        next((e.text for e in art.iter("ELocationID") if e.get("EIdType") == "doi" and e.text), None)
+    t = art.find(".//ArticleTitle")
+    if not doi or t is None:
+        return None
+    abstract = " ".join(((e.get("Label") + ": ") if e.get("Label") else "") + "".join(e.itertext())
+                        for e in art.iter("AbstractText"))
+    authors = [" ".join(x for x in (a.findtext("ForeName") or a.findtext("Initials"), a.findtext("LastName")) if x)
+               for a in art.iter("Author")]
+    j = art.find(".//Journal")
+    short = (j.findtext("ISOAbbreviation") if j is not None else None) or v["short"]
+    return {"doi": doi.strip().lower(), "title": _clean("".join(t.itertext())), "authors": [a for a in authors if a],
+            "venue": short[:40], "venue_name": (j.findtext("Title") if j is not None else None) or v.get("name") or short,
+            "published": _pm_date(art), "abstract": _clean(abstract), "source": "pubmed"}
+
+
+def pubmed_venue(v, cfg, since, today, log=print):
+    """"source": "pubmed": esearch over the entry-date window, then efetch (XML) in chunks of 200. `query` is a
+    PubMed term (e.g. '"wearable sensor"[tiab] AND sweat'); empty = the strongest positive keywords. Without an
+    NCBI key PubMed allows 3 requests per second: 0.4 s between requests."""
+    term = v.get("query") or _default_term(cfg)
+    if not term:
+        log(f"  [pubmed] {v['short']}: no query and no positive keywords yet")
+        return []
+    common = {"db": "pubmed", "tool": "ic-paper-radar", **({"email": cfg["contact_email"]} if cfg.get("contact_email") else {})}
+    q = {**common, "term": term, "datetype": "edat", "mindate": since.strftime("%Y/%m/%d"),
+         "maxdate": today.strftime("%Y/%m/%d"), "retmax": int(v.get("max_results", 200)), "retmode": "json"}
+    ids = json.loads(_get(EUTILS + "esearch.fcgi?" + urllib.parse.urlencode(q), cfg))["esearchresult"].get("idlist", [])
+    out = []
+    for i in range(0, len(ids), 200):
+        time.sleep(0.4)
+        xml = _get(EUTILS + "efetch.fcgi?" + urllib.parse.urlencode({**common, "id": ",".join(ids[i:i + 200]),
+                                                                     "retmode": "xml"}), cfg)
+        out += [p for p in (_pubmed_record(a, v) for a in ET.fromstring(xml).iter("PubmedArticle")) if p]
+    return out
+
+
+def _rxiv_author(a):
+    """bioRxiv lists 'Last, F.' → 'F. Last' (the form vip_match understands)."""
+    a = a.strip()
+    if ", " in a:
+        last, first = a.split(", ", 1)
+        return f"{first} {last}"
+    return a
+
+
+def biorxiv_venue(v, cfg, since, today, log=print):
+    """"source": "biorxiv" | "medrxiv": the official api.biorxiv.org details endpoint over the date window,
+    100 records per page, up to max_pages (10); `categories` (e.g. ["bioengineering", "neuroscience"]) keeps only
+    those; the latest version of each preprint wins."""
+    server = v.get("server") or ("medrxiv" if v.get("source") == "medrxiv" else "biorxiv")
+    cats = {c.lower() for c in v.get("categories") or []}
+    out, cursor = {}, 0
+    for _ in range(int(v.get("max_pages", 10))):
+        r = json.loads(_get(f"https://api.biorxiv.org/details/{server}/{since.isoformat()}/{today.isoformat()}/{cursor}/json", cfg))
+        items = r.get("collection") or []
+        for it in items:
+            doi = (it.get("doi") or "").lower()
+            if not doi or (cats and (it.get("category") or "").lower() not in cats):
+                continue
+            out[doi] = {"doi": doi, "title": _clean(it.get("title") or ""), "venue": v["short"],
+                        "authors": [_rxiv_author(a) for a in (it.get("authors") or "").split(";") if a.strip()],
+                        "venue_name": v.get("name") or server, "published": it.get("date") or "",
+                        "abstract": _clean(it.get("abstract") or ""), "source": server}
+        cursor += len(items)
+        try:
+            total = int(((r.get("messages") or [{}])[0]).get("total") or 0)
+        except (TypeError, ValueError):
+            total = 0
+        if not items or cursor >= total:
+            break
+    return list(out.values())
+
+
+SOURCES = {"pubmed": pubmed_venue, "biorxiv": biorxiv_venue, "medrxiv": biorxiv_venue}
 
 
 TEX = {"cdot": "·", "times": "×", "pm": "±", "mu": "µ", "sigma": "σ", "Omega": "Ω", "deg": "°", "circ": "°",
@@ -229,10 +395,15 @@ def nature_rss(bv, cfg, since, log):
     cookie jar. If a feed answers with a bot challenge (natelectron.rss served Fastly's `_fs-ch` page
     to Python on 2026-10-27), it fails to parse and is skipped: never work around the challenge."""
     opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
-    req = urllib.request.Request(bv["rss"], headers={"User-Agent": f"IC-Paper-Radar/2.0 (mailto:{cfg['contact_email']})"})
     try:
-        with opener.open(req, timeout=40) as r:
-            root = ET.fromstring(r.read())
+        body = _get_cached(bv["rss"], cfg, opener)  # v3.0: 304 Not Modified when the feed hasn't changed
+        if body is None:
+            log(f"  [beyond/rss] {bv['short']}: not modified since the last run (304)")
+            return []
+        root = ET.fromstring(body)
+        if not root.tag.lower().endswith(("rdf", "rss", "feed")):
+            raise ValueError(f"not a feed (<{root.tag}>)")
+        _cache_commit(bv["rss"])
     except Exception as e:
         log(f"  [beyond/rss] {bv['short']}: {e}")
         return []
@@ -464,11 +635,11 @@ def rescore_all(cfg, store, log=print):
 # ---------- OpenAlex ----------
 
 def openalex_enrich(papers, cfg, store, log):
-    """OpenAlex id, references (oa:W…), cited-by count and missing abstracts; 50 DOIs per request."""
+    """OpenAlex id, references (oa:W…), cited-by count and missing abstracts; OA_BATCH (40) DOIs per request."""
     n = 0
-    for i in range(0, len(papers), 50):
-        chunk = {p["doi"]: p for p in papers[i:i + 50]}
-        q = urllib.parse.urlencode({"filter": "doi:" + "|".join(chunk), "per-page": 50, "mailto": cfg["contact_email"],
+    for i in range(0, len(papers), OA_BATCH):
+        chunk = {p["doi"]: p for p in papers[i:i + OA_BATCH]}
+        q = urllib.parse.urlencode({"filter": "doi:" + "|".join(chunk), "per-page": OA_BATCH, "mailto": cfg["contact_email"],
                                     "select": "id,doi,abstract_inverted_index,referenced_works,cited_by_count"})
         try:
             res = json.loads(_get(f"https://api.openalex.org/works?{q}", cfg))["results"]
@@ -556,7 +727,7 @@ def _kw_norm(kw):
 def score(p, cfg, anchor_refs=frozenset()):
     own = f"{p['title']} {p['title']} {p.get('abstract') or ''}"
     text = f"{own} {' '.join(p.get('index_terms') or [])}"
-    total, hits, seen = 0, [], set()
+    total, hits, seen, title_w = 0, [], set(), 0
     for kw, w in cfg["positive_keywords"].items():
         if kw.startswith("re:") or _kw_norm(kw) not in seen:
             seen.add(_kw_norm(kw))
@@ -564,6 +735,12 @@ def score(p, cfg, anchor_refs=frozenset()):
             continue  # "low-noise" / "low noise" count once
         if w and _kw_hit(kw, text):
             total, hits = total + w, hits + [kw[3:].split("::", 1)[0] if kw.startswith("re:") else kw]
+            if w > 0 and _kw_hit(kw, p["title"] or ""):
+                title_w += w
+    # v3.0 title position multiplier: a keyword in the title counts title_multiplier (1.5) times its weight
+    bonus = round((scorer.settings(cfg)["title_multiplier"] - 1) * title_w)
+    if bonus > 0:
+        total, hits = total + bonus, hits + [f"title_boost:+{bonus}"]
     # A negative keyword (telecom / high-speed digital) zeroes only a paper with no pillar keyword at all; with
     # a positive hit, or a title matching negative_override, it costs negative_penalty, once.
     # Not against index terms: IEEE auto-tags bandgaps with "Photonic band gap".
@@ -578,6 +755,8 @@ def score(p, cfg, anchor_refs=frozenset()):
     for v in vip_match(p.get("authors"), cfg.get("vip_authors", [])):
         total, hits = total + cfg.get("vip_boost", 3), hits + [f"vip_author:{v}"]
         break  # one boost per paper, however many VIP co-authors
+    for label, pts in scorer.extra(p, cfg):  # v3.0: coupling with your core papers, your taste model
+        total, hits = total + pts, hits + [f"{label}:{pts:+d}"]
     if p.get("abstract") or p.get("user_silicon"):
         status = p.get("user_silicon") or verification(p, cfg)  # the user's call after reading the PDF wins
         if status == "silicon_verified":
@@ -630,6 +809,8 @@ def collect(cfg, store, today, log=print, backfill=True):
     since = today - timedelta(days=cfg["lookback_days"])
     st = {"per_venue": {}, "errors": [], "new": 0}
     week, _ = week_of(today)
+    global _STORE
+    _STORE = store  # conditional GETs keep their validators in this store
     ieee_notice(log)
 
     for v in cfg["venues"]:
@@ -637,11 +818,12 @@ def collect(cfg, store, today, log=print, backfill=True):
         if v.get("ieee_query"):
             papers, _ = ieee_venue_window(v, cfg, store, since, today, log)
             got.update({p["doi"]: p for p in papers})
+        src = SOURCES.get(v.get("source") or "")  # v3.0: PubMed / bioRxiv / medRxiv venues
         try:
-            for p in crossref_venue(v, cfg, since.isoformat()):
+            for p in (src(v, cfg, since, today, log) if src else crossref_venue(v, cfg, since.isoformat())):
                 got[p["doi"]] = {**p, **{k: x for k, x in got.get(p["doi"], {}).items() if x}}
         except Exception as e:
-            st["errors"].append(f"{v['short']} crossref: {e}")
+            st["errors"].append(f"{v['short']} {v.get('source') or 'crossref'}: {e}")
         new = sum(store.upsert({**p, "first_seen": today.isoformat()}, "pending") for p in got.values())
         st["per_venue"][v["short"]] = (len(got), new)
         st["new"] += new

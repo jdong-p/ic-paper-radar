@@ -152,15 +152,16 @@ SI_BADGE = {"silicon_verified": "✅", "simulation_only": "⚠️ sim"}
 def silicon(p, cfg, auto=False):
     """✅ / ⚠️ sim / ❔: the user's call (`user_silicon`, set after reading the PDF) unless auto=True, else the
     digest's Verification line, else the abstract's keyword cues."""
+    import presets  # v3.0: the domain preset's badge (✅ / ⚠️ sim for IC; 🧬 / 💻 for bio, …)
     if p.get("user_silicon") and not auto:
-        return SI_BADGE[p["user_silicon"]]
+        return presets.icon(p["user_silicon"], cfg)
     d = p.get("digest") or ""
     if "Silicon-Verified" in d:
-        return "✅"
+        return presets.icon("silicon_verified", cfg)
     if "Simulation-Only" in d:
-        return "⚠️ sim"
+        return presets.icon("simulation_only", cfg)
     v = fetcher.verification(p, cfg) if p.get("abstract") else "unclear"
-    return SI_BADGE.get(v, "❔")
+    return presets.icon(v if v in SI_BADGE else "", cfg)
 
 
 def _year(p):

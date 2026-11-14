@@ -113,6 +113,30 @@ automatically (see "Updating").
 `vip_authors` **特意留空**；填写之前运行 `python briefing.py` 会提示 `[SETUP REQUIRED]` 并停止（只有 `--topic`
 和 `--recall` 不需要 pillars）。
 
+### v3.0 at a glance / v3.0 概览
+
+- **🔎 Instant full-text search:** an SQLite FTS5 index (bm25: title ×5, your 🏷️ notes ×3, index terms,
+  authors, abstract) powers `--recall`, `--topic` and the Control Center's search box. It is built once, in a
+  second, and kept in sync automatically. Shared database files stay exactly as before.
+- **⚡ Fewer API calls:** OpenAlex lookups go 40 DOIs per request. Feeds are fetched with `ETag` /
+  `Last-Modified`, so an unchanged feed answers `304 Not Modified`.
+- **🎯 Smarter scores** (each shown in a paper's hits; `config.json` → `scoring`):
+  - `title_boost` (keywords in the title count 1.5×);
+  - `coupling:+3` (the paper builds on the same references as your 🏛️ / 📌 / ✅ / ⭐ papers);
+  - `taste:-2…+4`, a small classifier that learns from your own ✅ / ⭐ and 🗄️ marks once you have 8 of each.
+    The idea comes from Karpathy's arxiv-sanity-lite, done in plain Python.
+- **🧭 Other fields:** `"domain_preset"`: `ic_ece` (default), `bio_med` (PubMed + bioRxiv / medRxiv),
+  `chem_mat`, `general_eng`. Each sets the evidence badge (e.g. 🧬 Wet-Lab / In-Vivo vs 💻 In-Silico Only)
+  and can load starter venues. A venue with `"source": "pubmed"` (`"query"`: a PubMed search term) or
+  `"source": "biorxiv"` / `"medrxiv"` (`"categories"`) is fetched from those free APIs.
+- **🖥️ Deployment:**
+  - 💻 single PC (127.0.0.1 only, the default);
+  - 🌐 a mini-PC hub on your LAN / Tailscale (`"deployment": "mesh_lan"`: the `--gui` server also listens on
+    the private IPs in `sync_server.hosts`, behind its per-launch key; links in `output/_system/gui_link.txt`;
+    STARTUP.html shows copyable Task Scheduler commands).
+
+  (There is also a third card. Click it at your own risk. ☕)
+
 ### Without an AI agent or a terminal: the Setup & Control Center / 不用 AI、不用命令行：控制中心
 
 Double-click **`Start_Radar_GUI.cmd`** (Windows) or **`Start_Radar_GUI.command`** (macOS; the first time,
@@ -480,6 +504,39 @@ python briefing.py --adopt-external                              # later: take t
 - The other file is opened read-only. 合并他人的库：同一 DOI 只保留一条，只补空字段，从不改动你的标记；
   新论文标为 `external`，不会进入你的 pillar，需要时用 `--adopt-external` 收入。
 
+### Your own private data repo (v3.0) / 你自己的私有数据仓库
+
+The shared-repo protocol is defined by this public code, so anyone can **own** a private data repo and share it with
+whoever they choose. Nobody has to host one for you. 任何人都可以拥有并分享自己的私有数据仓库，无需他人托管。
+
+```bash
+python briefing.py --init-data-repo your-name/my-paper-radar-data
+```
+
+(or **✨ Create / Init My Private Repo** in `STARTUP.html`)
+1. With the [GitHub CLI](https://cli.github.com) signed in (`gh auth login`), it creates the private repo for you;
+   without `gh`, create an **empty private** repo on github.com first.
+2. It clones it into `paths.data_repo_dir` (default `../ic-paper-radar-data`) and writes the protocol files:
+   - `IC_PAPER_RADAR_DATA` (marks a data repo: only such clones are ever reset);
+   - `.gitattributes`;
+   - `README.md`;
+   - your clean `paper_store_clean_share.sqlite` and `peers/<peer_id>.json`.
+3. It pushes `main` and sets `"data_repo": {"remote_url": "…"}`. On a second computer, the first
+   `--sync-data-repo` clones it automatically.
+
+**Sharing:** add a collaborator in the repo's GitHub settings. With **write** access they sync the same corpus
+(`--sync-data-repo`). With **read** access they add your repo to their `"read_repos"` list:
+
+```json
+"data_repo": {"read_repos": ["your-name/my-paper-radar-data", "https://github.com/other/their-data.git"]}
+```
+
+`python briefing.py --pull-data-repo` (📥 **Read / Pull Shared Repos**) then fetches your repo and every read
+repo, merges their papers and shows each peer's radar under 👥 Peers. It never pushes to them; the same happens at
+the end of every `--sync-data-repo`. Papers you read from a shared repo become part of your own clean corpus when
+you sync (only papers and abstracts, never anyone's marks or notes).
+只读共享：协作者把你的仓库加入 `read_repos`，`--pull-data-repo` 只拉取、不推送。
+
 ### Optional: free IEEE API key / 可选：免费 IEEE API key
 
 Without a key the radar prints one `[INFO]` line and uses OpenAlex + Crossref. With a key, new papers get
@@ -546,7 +603,8 @@ switches to `--no-claude` by itself and everything else still works. Add `--no-c
 | `python briefing.py --merge-store OTHER.sqlite [--peer NAME]` | Merge someone else's store: fill gaps, new papers as `external` |
 | `python briefing.py --adopt-external` | Move external papers that fit your pillars into your archive |
 | `python briefing.py --sync-data-repo` | Sync with a shared corpus repo: fetch, merge, export, push if the remote gains (also on Fridays) |
-| `python briefing.py --pull-data-repo` | Read only: fetch the shared corpus repo, import the peers' radars, merge its papers (no push) |
+| `python briefing.py --init-data-repo OWNER/NAME` | Create (with `gh`) or clone your own private data repo, push the protocol files, set `remote_url` |
+| `python briefing.py --pull-data-repo` | Read only: fetch your data repo and every `read_repos` entry, import the peers' radars, merge their papers (no push) |
 | `python briefing.py --gui [PORT]` | Setup & Control Center in your browser (`Start_Radar_GUI.cmd` / `.command` do the same) |
 | `python briefing.py --lineage` | Conference ↔ journal links for every catalog paper |
 | `python briefing.py --finalize` | Finalize this week's report now |
@@ -561,6 +619,7 @@ switches to `--no-claude` by itself and everything else still works. Add `--no-c
 | `config.example.json` | The starter template and the defaults for any key your `config.json` lacks / 模板与默认值 |
 | `config_file.py` | Creates `config.json` from the template, merges it over the defaults |
 | `briefing.py` | The command you run / 运行入口 |
+| `scorer.py`, `presets.py` | v3.0 score boosters (coupling, taste) and domain presets |
 | `run_lock.py` | One run at a time: `.run.lock` and `.run.log` (not in Git) / 运行锁 |
 | `Start_Radar_GUI.cmd`, `Start_Radar_GUI.command`, `control_center.py` | The Setup & Control Center (`output/STARTUP.html`, `--gui`) / 控制中心 |
 | `fetcher.py`, `topic.py`, `relations.py`, `pins.py` | Collection, scoring, deep-dives, lineage, pinning |

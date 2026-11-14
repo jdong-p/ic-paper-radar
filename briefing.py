@@ -50,6 +50,7 @@ import data_repo
 import fetcher
 import html_renderer
 import pins
+import presets
 import relations
 import run_lock
 import topic
@@ -336,7 +337,7 @@ def render(week, friday, today, vpn, papers, also, catch, beyond, notes, edges, 
         return "\n".join(L + ["_No matching papers yet this week._", ""])
 
     def table(rows, numbered, added_col):
-        out = [f"| {numbered} | Score | Silicon | Venue | Title | Cited by | {added_col} | Hits |",
+        out = [f"| {numbered} | Score | {presets.badge(cfg)['column']} | Venue | Title | Cited by | {added_col} | Hits |",
                "|---|---|---|---|---|---|---|---|"]
         for i, p in enumerate(rows, 1):
             new = " 🆕" if p["first_seen"] == today.isoformat() else ""
@@ -344,7 +345,7 @@ def render(week, friday, today, vpn, papers, also, catch, beyond, notes, edges, 
             hits = ", ".join(f"**{h}**" if h.startswith(("vip_author", "cites an anchor")) else h
                              for h in p["hits"] if h not in ("silicon_verified", "simulation_only"))
             when = p["first_seen"][5:] if added_col == "Added" else p["published"]
-            out.append(f"| {numbered.replace('#', '') + str(i)} | {p['score']} | {BADGE[_verif(p)]} | {p['venue']} "
+            out.append(f"| {numbered.replace('#', '') + str(i)} | {p['score']} | {BADGE[_verif(p)] if presets.key(cfg) == "ic_ece" else presets.icon(_verif(p), cfg)} | {p['venue']} "
                        f"| [{p['title']}](https://doi.org/{p['doi']}){new} | {cites} | {when} | {hits} |")
         return out
 
@@ -448,11 +449,28 @@ def sync_data_repo(store, store_path, cfg, push=True, log=print):
     return 0
 
 
+def init_data_repo(spec, store, store_path, cfg, log=print):
+    """--init-data-repo (STARTUP.html ✨ Create / Init My Private Repo): data_repo.init_repo, then
+    data_repo.remote_url in config.json (only the changed key, control_center.write_config). Returns 0 / 1."""
+    try:
+        r = data_repo.init_repo(spec, store, store_path, cfg, secrets=(curation.sync_token(),), log=log)
+    except Exception as e:
+        log(f"Data repo not initialized: {e}")
+        return 1
+    import control_center
+    changed = control_center.write_config([(["data_repo", "remote_url"], r["url"])], cfg)
+    log(f"Data repo ready: {r['dir']} ({'created on GitHub, ' if r['created'] else ''}"
+        f"{'initialized and pushed' if r['initialized'] else 'connected'})"
+        + ("; config.json: data_repo.remote_url set" if changed else ""))
+    html_renderer.write_all(store, cfg, log)
+    return 0
+
+
 def pull_data_repo(store, cfg, write_html=True, log=print):
     """--pull-data-repo (STARTUP.html's 📥 Read from Private Repo): data_repo.pull, read only (nothing exported or
     pushed), then the HTML, so Peers/DASHBOARD_<peer>.html and the dashboard are current. Returns 0 / 1."""
     try:
-        data_repo.pull(store, cfg, adopt=adopt_external, log=log)
+        data_repo.pull_only(store, cfg, adopt=adopt_external, log=log)
     except Exception as e:
         log(f"Shared corpus not read: {e}")
         return 1
@@ -524,6 +542,9 @@ def main():
     ap.add_argument("--pull-data-repo", action="store_true",
                     help="read only: fetch + reset the shared corpus repo, import the peers' overlays, merge its papers "
                          "into this store (+ adopt), rewrite the HTML; nothing is exported or pushed")
+    ap.add_argument("--init-data-repo", metavar="OWNER/NAME_OR_URL",
+                    help="create (gh) or clone your own private data repo into paths.data_repo_dir, write the protocol "
+                         "files + your clean corpus + overlay, push main, set data_repo.remote_url")
     ap.add_argument("--gui", nargs="?", type=int, const=0, metavar="PORT",
                     help="Setup & Control Center: STARTUP.html served on http://127.0.0.1:18766 (or PORT) with working "
                          "buttons, until Ctrl+C (control_center.py)")
@@ -581,10 +602,13 @@ def main():
     if fetcher.store_paper_count(store_path) == 0:  # checked before Store() creates an empty file
         print("\n" + fetcher.STORE_TIP + "\n")
     store = Store(store_path)
+    import scorer
+    scorer.prepare(store, cfg)  # v3.0: coupling core + taste model from this store's marks
     topic_dir = Path(cfg["paths"]["topic_dir"])
 
     # sharing (v2.16): stand-alone actions, no collection / report
-    if a.merge_store or a.adopt_external or a.export_share is not None or a.sync_data_repo or a.pull_data_repo:
+    if (a.merge_store or a.adopt_external or a.export_share is not None or a.sync_data_repo or a.pull_data_repo
+            or a.init_data_repo):
         if a.merge_store:
             store_mod.merge_store(store, a.merge_store, a.peer)
             if a.peer and not a.dry_run:  # the peer's page (Peers/DASHBOARD_<peer>.html) and the header link
@@ -593,6 +617,8 @@ def main():
             print(f"Adopted {adopt_external(store, cfg)} external papers into the archive (≥ min_score)")
         if a.export_share is not None:
             export_share(store_path, cfg, a.export_share or None, a.include_curation)
+        if a.init_data_repo:
+            return init_data_repo(a.init_data_repo, store, store_path, cfg)
         if a.pull_data_repo:
             return pull_data_repo(store, cfg, write_html=not a.dry_run)
         if a.sync_data_repo:  # with --dry-run: on the dry-run copy, committed locally but never pushed
@@ -741,7 +767,7 @@ def main():
         if final:  # the share database grows with the corpus, once a week
             export_share(store_path, cfg)
             # then the shared corpus repo, if this computer has a clone of it (silently skipped otherwise)
-            if (cfg.get("data_repo") or {}).get("friday_sync", True) and not data_repo.check_clone(data_repo.repo_dir(cfg)):
+            if (cfg.get("data_repo") or {}).get("friday_sync", True) and not data_repo.check_clone(data_repo.repo_dir(cfg), cfg):
                 sync_data_repo(store, store_path, cfg)
     print(store.counts())
     return 0

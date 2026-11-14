@@ -56,8 +56,102 @@ MIGRATIONS = {"grp": "TEXT DEFAULT 'ieee'",      # 'ieee' or 'beyond' (Nature/Sc
               "user_note": "TEXT"}                # 🏷️ Tech note: the user's key technique / takeaway (v2.15)
 
 
+# ---------- full-text search (v3.0): SQLite FTS5 over the papers table ----------
+# An external-content index (no second copy of the text): papers_fts's rowid is papers.rowid, kept in sync by
+# three triggers, so every insert, update (upsert, merge, note, marks) and delete updates it, and scoring
+# updates (score, hits, status) don't touch it at all. The store is never VACUUMed (that could renumber rowids);
+# export_clean_share_db() drops the index from the share copy, so shared files stay plain v2.19 databases.
+FTS_COLS = ("title", "abstract", "authors", "index_terms", "user_note")
+# bm25 weights in column order: doi (UNINDEXED), title, abstract, authors, index_terms, user_note
+FTS_WEIGHTS = (0.0, 5.0, 1.0, 2.0, 2.5, 3.0)
+FTS_TRIGGERS = ("papers_fts_ai", "papers_fts_ad", "papers_fts_au")
+_ALL = ", ".join(("doi",) + FTS_COLS)
+_NEW = ", ".join(f"new.{c}" for c in ("doi",) + FTS_COLS)
+_OLD = ", ".join(f"old.{c}" for c in ("doi",) + FTS_COLS)
+FTS_SQL = f"""
+CREATE VIRTUAL TABLE IF NOT EXISTS papers_fts USING fts5({_ALL.replace('doi', 'doi UNINDEXED', 1)},
+  content='papers', content_rowid='rowid', tokenize='unicode61 remove_diacritics 2');
+CREATE TRIGGER IF NOT EXISTS papers_fts_ai AFTER INSERT ON papers BEGIN
+  INSERT INTO papers_fts(rowid, {_ALL}) VALUES (new.rowid, {_NEW});
+END;
+CREATE TRIGGER IF NOT EXISTS papers_fts_ad AFTER DELETE ON papers BEGIN
+  INSERT INTO papers_fts(papers_fts, rowid, {_ALL}) VALUES ('delete', old.rowid, {_OLD});
+END;
+CREATE TRIGGER IF NOT EXISTS papers_fts_au AFTER UPDATE OF {_ALL} ON papers BEGIN
+  INSERT INTO papers_fts(papers_fts, rowid, {_ALL}) VALUES ('delete', old.rowid, {_OLD});
+  INSERT INTO papers_fts(rowid, {_ALL}) VALUES (new.rowid, {_NEW});
+END;
+"""
+_FTS5 = None
+
+
+def fts5_available():
+    """True if this Python's SQLite has FTS5 (python.org builds and most distributions do)."""
+    global _FTS5
+    if _FTS5 is None:
+        try:
+            c = sqlite3.connect(":memory:")
+            c.execute("CREATE VIRTUAL TABLE t USING fts5(a)")
+            c.close()
+            _FTS5 = True
+        except sqlite3.Error:
+            _FTS5 = False
+    return _FTS5
+
+
+def drop_fts(db):
+    """Remove the index and its triggers (the share copy; or a store opened by a Python without FTS5)."""
+    for t in FTS_TRIGGERS:
+        db.execute(f"DROP TRIGGER IF EXISTS {t}")
+    if fts5_available():
+        db.execute("DROP TABLE IF EXISTS papers_fts")
+    db.commit()
+
+
+def ensure_fts(db):
+    """Create papers_fts + triggers and fill it once ('rebuild', a few seconds for 10,000 papers) when missing.
+    Returns whether full-text search is available. Without FTS5 the triggers are dropped, because they would
+    make every write fail; searches then fall back to LIKE."""
+    if not fts5_available():
+        for t in FTS_TRIGGERS:
+            db.execute(f"DROP TRIGGER IF EXISTS {t}")
+        db.commit()
+        return False
+    have = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE name IN (?,?,?,?)",
+                                     ("papers_fts", *FTS_TRIGGERS))}
+    if len(have) == 4:
+        return True
+    try:
+        if "papers_fts" in have:  # a half-made index (an interrupted first open): start over
+            drop_fts(db)
+        db.executescript(FTS_SQL)
+        db.execute("INSERT INTO papers_fts(papers_fts) VALUES('rebuild')")
+        db.commit()
+    except sqlite3.OperationalError:  # another process created it at the same moment
+        db.rollback()
+    return {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE name='papers_fts'")} == {"papers_fts"}
+
+
+def fts_query(text, prefix=False):
+    """User text → an FTS5 query: every word (or hyphenated / dotted run, e.g. 'sub-100nW', '0.5-V') as a quoted
+    phrase, all of them required. Quotes and operators in the text can't break the query."""
+    terms = []
+    for t in re.findall(r"[^\W_]+(?:[-.·][^\W_]+)*", text or ""):
+        terms.append('"' + " ".join(re.split(r"[-.·]", t)) + '"')
+    if prefix and terms:
+        terms[-1] += "*"
+    return " ".join(terms)
+
+
+def fts_any(terms):
+    """[term, …] → one FTS5 query matching any of them (each a phrase, its last word as a prefix, so 'energy
+    harvester' also finds 'energy harvesters'); regex terms (re:…) are left out; '' if none."""
+    q = [fts_query(t, prefix=True) for t in terms if not str(t).startswith("re:")]
+    return " OR ".join(f"({x})" for x in q if x)
+
+
 class Store:
-    def __init__(self, path):
+    def __init__(self, path, fts=True):
         self.db = sqlite3.connect(path)
         self.db.row_factory = sqlite3.Row
         self.db.executescript(SCHEMA)
@@ -72,6 +166,7 @@ class Store:
         # v2.9: ⭐ is its own flag; a pre-v2.9 'cite' mark becomes Selected + Cited (idempotent)
         self.db.execute("UPDATE papers SET user_mark='selected', cited=1 WHERE user_mark='cite'")
         self.db.commit()
+        self.fts = ensure_fts(self.db) if fts else False  # v3.0: papers_fts, created and filled once
 
     def _row(self, r):
         if r is None:
@@ -130,6 +225,34 @@ class Store:
         self.db.execute("INSERT INTO api_usage VALUES (?,?,1) ON CONFLICT(day, api) DO UPDATE SET calls=calls+1",
                         (date.today().isoformat(), api))
         self.db.commit()
+
+    def fts_search(self, query, limit=50, prefix=False, match=None):
+        """Full-text search, best first: bm25 with title ×5, 🏷️ notes ×3, index terms ×2.5, authors ×2,
+        abstract ×1 (FTS_WEIGHTS). `match` is a ready FTS5 query (fts_any). Each row also gets 'rank' (lower is
+        better) and 'snip' (the abstract around the hit, matches in [brackets]). Without FTS5: every word must
+        appear in the title, abstract, authors or note (LIKE), newest first."""
+        if self.fts:
+            q = match or fts_query(query, prefix)
+            if not q:
+                return []
+            w = ", ".join(str(x) for x in FTS_WEIGHTS)
+            try:
+                rows = self.db.execute(
+                    f"SELECT p.*, bm25(papers_fts, {w}) AS rank, snippet(papers_fts, 2, '[', ']', '…', 14) AS snip "
+                    "FROM papers_fts JOIN papers p ON p.rowid = papers_fts.rowid WHERE papers_fts MATCH ? "
+                    "ORDER BY rank LIMIT ?", (q, int(limit))).fetchall()
+                return [self._row(r) for r in rows]
+            except sqlite3.OperationalError:
+                return []
+        words = re.findall(r"[^\W_]+", query or "")[:8]
+        if not words:
+            return []
+        cond = " AND ".join("(title LIKE ? OR abstract LIKE ? OR authors LIKE ? OR COALESCE(user_note,'') LIKE ?)"
+                            for _ in words)
+        args = [f"%{x}%" for x in words for _ in range(4)]
+        rows = self.db.execute(f"SELECT *, 0 AS rank, '' AS snip FROM papers WHERE {cond} ORDER BY published DESC LIMIT ?",
+                               (*args, int(limit))).fetchall()
+        return [self._row(r) for r in rows]
 
     def counts(self):
         return dict(self.db.execute("SELECT status, COUNT(*) FROM papers GROUP BY status").fetchall())
@@ -202,8 +325,9 @@ def export_clean_share_db(src_db_path, dst_db_path, include_curation=False, secr
     finally:
         src.close()
     try:
-        s = Store(tmp)  # migrates an older store (adds user_note …) so the reset covers every column
+        s = Store(tmp, fts=False)  # migrates an older store (adds user_note …) so the reset covers every column
         db = s.db
+        drop_fts(db)  # v3.0: the share file is a plain papers table (no FTS index), readable by v2.19 radars
         db.execute("DELETE FROM api_usage")
         db.execute("DELETE FROM peer_curation")
         if skip_arxiv:

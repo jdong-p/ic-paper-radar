@@ -60,8 +60,11 @@ PATHS = {"pillars": ["pillars"], "pillar_short": ["pillar_short"], "positive_key
          "negative_keywords": ["negative_keywords"], "negative_override": ["negative_override"],
          "key1_themes": ["beyond_ieee", "key1_themes"], "min_score": ["min_score"], "vip_authors": ["vip_authors"],
          "vip_boost": ["vip_boost"], "anchors": ["anchors"], "contact_email": ["contact_email"],
-         "data_repo_dir": ["paths", "data_repo_dir"]}
-DATA_REPO_KEYS = ("peer_id", "share_curation", "share_notes", "adopt_external")
+         "data_repo_dir": ["paths", "data_repo_dir"], "domain_preset": ["domain_preset"], "deployment": ["deployment"],
+         "sync_hosts": ["sync_server", "hosts"]}
+DATA_REPO_KEYS = ("peer_id", "share_curation", "share_notes", "adopt_external", "remote_url", "read_repos")
+DEPLOYMENTS = ("local", "mesh_lan")  # 🏢 enterprise is only an easter egg in STARTUP.html
+HOST_RX = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.-]{0,99}$")
 ARXIV_KEYS = ("enabled", "share", "queries", "categories", "must_all", "exclude_any")
 STARTER_ONLY = {"pillars", "pillar_short", "arxiv"}  # the Minisforum radar's pillars are fixed in catalog.py
 
@@ -89,9 +92,29 @@ def load_cfg():
     return fetcher.load_config()
 
 
+def deployment(cfg):
+    """local | mesh_lan: config.json "deployment", else mesh_lan when sync_server.hosts has a non-loopback host."""
+    d = cfg.get("deployment")
+    if d in DEPLOYMENTS:
+        return d
+    hosts = (cfg.get("sync_server") or {}).get("hosts") or []
+    return "mesh_lan" if any(not str(h).startswith("127.") and h != "localhost" for h in hosts) else "local"
+
+
+def _lan_ip(h):
+    """A private-LAN or Tailscale/CGNAT (100.64.0.0/10) IP address: the only extra addresses --gui may bind."""
+    import ipaddress
+    try:
+        ip = ipaddress.ip_address(str(h))
+    except ValueError:
+        return False
+    return not ip.is_loopback and (ip.is_private or ip in ipaddress.ip_network("100.64.0.0/10"))
+
+
 def editable(cfg):
     """The fields STARTUP.html edits, from the effective config (Starter: config.json over the template)."""
     import catalog
+    import presets
     dr, ax = cfg.get("data_repo") or {}, cfg.get("arxiv") or {}
     ks = sorted(k for k in catalog.PILLARS if k)
     out = {"pillars": list(cfg.get("pillars") or []) if STARTER else [catalog.PILLARS[k] for k in ks],
@@ -106,8 +129,11 @@ def editable(cfg):
            "contact_email": cfg.get("contact_email") or "",
            "data_repo": {"peer_id": dr.get("peer_id") or "", "share_curation": dr.get("share_curation", True) is not False,
                          "share_notes": dr.get("share_notes", True) is not False,
-                         "adopt_external": dr.get("adopt_external", True) is not False},
-           "data_repo_dir": (cfg.get("paths") or {}).get("data_repo_dir") or ""}
+                         "adopt_external": dr.get("adopt_external", True) is not False,
+                         "remote_url": dr.get("remote_url") or "", "read_repos": list(dr.get("read_repos") or [])},
+           "data_repo_dir": (cfg.get("paths") or {}).get("data_repo_dir") or "",
+           "domain_preset": presets.key(cfg), "deployment": deployment(cfg),
+           "sync_hosts": list((cfg.get("sync_server") or {}).get("hosts") or [])}
     if STARTER:
         out["arxiv"] = {k: ax.get(k, False if k in ("enabled", "share") else []) for k in ARXIV_KEYS}
     return out
@@ -235,7 +261,23 @@ def validate(upd, cfg):
                 errs.append("data_repo: expected an object")
                 continue
             for kk, vv in v.items():
-                if kk == "peer_id":
+                if kk == "remote_url":
+                    def remote(vv=vv):
+                        import data_repo
+                        if not isinstance(vv, str) or not vv.strip():
+                            return ""
+                        data_repo.repo_url(vv)  # ValueError for anything but owner/name, a clean URL or a folder
+                        return vv.strip()
+                    put(["data_repo", kk], remote)
+                elif kk == "read_repos":
+                    def reads(vv=vv):
+                        import data_repo
+                        lst = _texts(vv, "data_repo.read_repos", maxn=20, maxlen=400)
+                        for x in lst:
+                            data_repo.repo_url(x)
+                        return lst
+                    put(["data_repo", kk], reads)
+                elif kk == "peer_id":
                     import store as store_mod
                     put(["data_repo", kk], lambda vv=vv: vv.strip() if isinstance(vv, str) and (
                         not vv.strip() or store_mod.PEER_ID_RX.match(vv.strip())) else _fail(
@@ -270,6 +312,27 @@ def validate(upd, cfg):
                     put(["arxiv", kk], groups)
                 else:
                     errs.append(f"arxiv.{kk}: not editable here")
+        elif k == "domain_preset":
+            import presets
+            put(PATHS[k], lambda v=v: v if v in presets.PRESETS else _fail(
+                f"domain_preset: one of {', '.join(presets.PRESETS)}"))
+        elif k == "apply_preset":  # {"key": …, "replace_venues": bool} → domain_preset + evidence cues (+ venues)
+            import presets
+            try:
+                out.extend(presets.apply_changes((v or {}).get("key"), cfg, bool((v or {}).get("replace_venues"))))
+            except (ValueError, AttributeError) as e:
+                errs.append(f"apply_preset: {e}")
+        elif k == "deployment":
+            put(PATHS[k], lambda v=v: v if v in DEPLOYMENTS else _fail(
+                "deployment: local or mesh_lan (🏢 enterprise needs coffee, not a config key)"))
+        elif k == "sync_hosts":
+            def hosts(v=v):
+                h = _texts(v, "sync_server.hosts", maxn=10, maxlen=100)
+                bad = [x for x in h if not HOST_RX.match(x)]
+                if bad:
+                    raise ValueError(f"sync_server.hosts: not a host name or IP address: {', '.join(bad[:3])}")
+                return h
+            put(PATHS[k], hosts)
         else:
             errs.append(f"{k}: not an editable setting")
     if errs:
@@ -511,6 +574,11 @@ def store_status(cfg):
             out["cited"] = one("SELECT COUNT(*) FROM papers WHERE cited=1")
         if "user_note" in cols:
             out["notes"] = one("SELECT COUNT(*) FROM papers WHERE TRIM(COALESCE(user_note,''))<>''")
+        if {"user_mark", "cited", "pin"} <= cols:  # the taste model's training examples (scorer.py)
+            import scorer
+            out["taste_pos"] = one(f"SELECT COUNT(*) FROM papers WHERE {scorer.POS_SQL}")
+            out["taste_neg"] = one(f"SELECT COUNT(*) FROM papers WHERE {scorer.NEG_SQL}")
+        out["fts"] = bool(c.execute("SELECT 1 FROM sqlite_master WHERE name='papers_fts'").fetchone())
         dois = [str(d).lower() for d in cfg.get("anchors") or []]
         if dois:
             pin = "pin" if "pin" in cols else "NULL"
@@ -530,7 +598,7 @@ def data_repo_status(cfg):
            "reason": "", "papers": 0, "missing_here": None, "commit": None, "peers": [], "me": "",
            "default_dir": str(HERE.parent / data_repo.REMOTE_MARK)}
     try:
-        why = data_repo.check_clone(repo)
+        why = data_repo.check_clone(repo, cfg)
     except RuntimeError as e:
         why = str(e)
     out["reason"], out["connected"] = why or "", not why
@@ -579,7 +647,26 @@ def data_repo_status(cfg):
         page = root / "Peers" / f"DASHBOARD_{p['id']}.html"
         p["href"] = f"Peers/DASHBOARD_{p['id']}.html" if page.exists() else None
     out["peers"] = sorted(seen.values(), key=lambda p: (not p["me"], p["id"].lower()))
+    dcfg = cfg.get("data_repo") or {}
+    out["remote_url"] = dcfg.get("remote_url") or (_origin_of(repo) if not why else "")
+    out["read_repos"] = []
+    cache = Path(str(repo) + "_peers")
+    for spec in dcfg.get("read_repos") or []:
+        try:
+            src = data_repo.repo_url(spec)
+            d = Path(src) if Path(src).exists() and (Path(src) / data_repo.DB_NAME).exists() and \
+                not data_repo.REPO_URL_RX.match(str(spec).strip()) else \
+                cache / (data_repo._slug(data_repo._norm_url(src).replace("/", "_")) or "repo")
+            out["read_repos"].append({"spec": spec, "dir": str(d), "ready": (d / data_repo.DB_NAME).exists(),
+                                      "papers": data_repo._count(d / data_repo.DB_NAME)})
+        except Exception as e:
+            out["read_repos"].append({"spec": spec, "dir": "", "ready": False, "papers": 0, "error": str(e)})
     return out
+
+
+def _origin_of(repo):
+    import data_repo
+    return data_repo._git(repo, "remote", "get-url", "origin", check=False).stdout.strip()
 
 
 def has_claude(cfg):
@@ -610,18 +697,50 @@ def status(cfg):
                     "has_git": shutil.which("git") is not None,
                     "contact_email_set": bool(EMAIL_RX.match((cfg.get("contact_email") or "").strip()))},
             "data_repo": dr,
+            "taste": {"pos": st.get("taste_pos", 0), "neg": st.get("taste_neg", 0),
+                      "need": (cfg.get("scoring") or {}).get("taste_min_examples", 8),
+                      "enabled": (cfg.get("scoring") or {}).get("taste", True) is not False},
+            "deploy": deploy_status(cfg),
             "sharing": {"selected": st["selected"], "cited": st["cited"], "notes": st["notes"],
                         "share_curation": (cfg.get("data_repo") or {}).get("share_curation", True) is not False,
                         "share_notes": (cfg.get("data_repo") or {}).get("share_notes", True) is not False}}
 
 
-# ---------- the four actions, one at a time, in a background worker ----------
+def deploy_status(cfg):
+    """The 💻 / 🌐 deployment card: mode, hosts, the phone/LAN link files and Task Scheduler commands to copy."""
+    import curation
+    root, sysd = Path(cfg["paths"]["onedrive_root"]), Path(cfg["paths"].get("system_dir") or Path(cfg["paths"]["onedrive_root"]) / "_system")
+    sc = cfg.get("sync_server") or {}
+    py = Path(sys.executable)
+    pyw = py.with_name("pythonw.exe") if py.with_name("pythonw.exe").exists() else py
+    pyc = py.with_name("python.exe") if py.with_name("python.exe").exists() else py
+    b = HERE / "briefing.py"
+    if STARTER:
+        q = '\\"'  # schtasks /TR needs the inner quotes escaped as \"
+        tasks = [f'schtasks /Create /TN IC_Paper_Radar_GUI /TR "{q}{pyw}{q} {q}{b}{q} --gui --no-browser" /SC ONLOGON /IT /F',
+                 f'schtasks /Create /TN IC_Paper_Radar_Daily /TR "{q}{pyc}{q} {q}{b}{q}" /SC DAILY /ST 07:00 /IT /F',
+                 "schtasks /Query /TN IC_Paper_Radar_GUI /V /FO LIST"]
+    else:
+        tasks = ["schtasks /Query /TN PaperRadar_SyncServer /V /FO LIST",
+                 "schtasks /End /TN PaperRadar_SyncServer & schtasks /Run /TN PaperRadar_SyncServer",
+                 "schtasks /Query /TN PaperRadar_Daily /V /FO LIST",
+                 "schtasks /Query /TN PaperRadar_FridayNoonSync /V /FO LIST"]
+    return {"mode": deployment(cfg), "hosts": list(sc.get("hosts") or []), "port": sc.get("port", 18765),
+            "gui_port": GUI_PORT, "lan_ok": [h for h in sc.get("hosts") or [] if _lan_ip(h)],
+            "phone_link": "Open_on_iPhone.txt" if (root / "Open_on_iPhone.txt").exists() else None,
+            "gui_link": str(sysd / "gui_link.txt") if (sysd / "gui_link.txt").exists() else None,
+            "server": "radar_sync_server.py (:18765, PaperRadar_SyncServer)" if not STARTER else "python briefing.py --gui",
+            "tasks": tasks}
 
-ACTIONS = {"rescore_and_seed": "▶ Run & Update My Dashboard", "pull_data_repo": "📥 Read from Private Repo",
-           "sync_data_repo": "🔄 Full Sync with Private Repo", "daily": "🌐 Fetch New Papers Now"}
+
+# ---------- the actions, one at a time, in a background worker ----------
+
+ACTIONS = {"rescore_and_seed": "▶ Run & Update My Dashboard", "pull_data_repo": "📥 Read / Pull Shared Repos",
+           "sync_data_repo": "🔄 Full Sync with My Private Repo", "daily": "🌐 Fetch New Papers Now",
+           "init_data_repo": "✨ Create / Init My Private Repo"}
 
 
-def plan(action, cfg):
+def plan(action, cfg, opts=None):
     """briefing.py argument lists for an action (run in order; a failed step doesn't stop the next one).
     Run & Update first adopts the merged ('external') papers that score ≥ min_score with the keywords just saved
     (data_repo.adopt_external), so a collaborator who read the shared corpus before setting pillars gets them."""
@@ -629,6 +748,7 @@ def plan(action, cfg):
     return {"rescore_and_seed": adopt + [["--rescore", "--seed-pillars", "5", "--no-claude"]],
             "pull_data_repo": [["--pull-data-repo"]],
             "sync_data_repo": [["--sync"], ["--sync-data-repo"]],
+            "init_data_repo": [["--init-data-repo", str((opts or {}).get("spec") or "<owner/name>")]],
             "daily": [[] if has_claude(cfg) else ["--no-claude"]]}[action]
 
 
@@ -708,8 +828,8 @@ class Jobs:
     def _clone(self, opts):
         import data_repo
         url = str(opts.get("clone_url") or "").strip()
-        if not CLONE_RX.match(url) or data_repo.REMOTE_MARK not in url:
-            raise ValueError(f"not a clone URL of {data_repo.REMOTE_MARK} (https://… or git@…, no user name or token)")
+        if not CLONE_RX.match(url):
+            raise ValueError("not a clone URL (https://… or git@…, no user name or token)")
         cfg = load_cfg()
         d = str(opts.get("clone_dir") or "").strip()
         target = Path(d).expanduser() if d else data_repo.repo_dir(cfg)
@@ -717,7 +837,7 @@ class Jobs:
             target = HERE / target
         target = target.resolve()
         if target.exists() and any(target.iterdir()):
-            why = data_repo.check_clone(target)
+            why = data_repo.check_clone(target, cfg)
             if why:
                 raise ValueError(f"{target} exists and is not a clone of {data_repo.REMOTE_MARK}: choose another folder")
             self.log(f"Already cloned: {target}")
@@ -727,9 +847,15 @@ class Jobs:
                 self.log("git clone failed: check the URL and that your GitHub account can read the repo "
                          "(on Windows, Git Credential Manager asks you to sign in once)")
                 return rc
+        why = data_repo.check_clone(target, dict(cfg, data_repo=dict(cfg.get("data_repo") or {}, remote_url=url)))
+        if why:
+            self.log(f"[WARN] {why}: is this an IC Paper Radar data repo?")
+        changes = [(["data_repo", "remote_url"], url)]
         if target != data_repo.repo_dir(cfg).resolve():
-            write_config([(["paths", "data_repo_dir"], str(target))], cfg)
-            self.log(f"config.json: paths.data_repo_dir = {target}")
+            changes.append((["paths", "data_repo_dir"], str(target)))
+        changed = write_config(changes, cfg)
+        if changed:
+            self.log(f"config.json: {', '.join(changed)}")
         return 0
 
     def _run(self, action, opts):
@@ -738,7 +864,7 @@ class Jobs:
             if action == "pull_data_repo" and opts.get("clone_url"):
                 rc = self._clone(opts)
             if not rc:
-                for args in plan(action, load_cfg()):
+                for args in plan(action, load_cfg(), opts):
                     r = self._proc([python_exe(), "-u", str(HERE / "briefing.py"), *args],
                                    f"python briefing.py {' '.join(args)}".rstrip())
                     rc = r or rc  # like run_data_repo_sync.cmd: the last failure's code, else 0
@@ -779,8 +905,43 @@ def external_run(jobs):
             "args": h.get("args") or [], "started": h.get("started")}
 
 
+def search_store(cfg, q, limit=30):
+    """GET /api/search?q=…: the store's FTS5 index (bm25, title ×5 …, store.FTS_WEIGHTS), read only; LIKE
+    without it. Returns (mode, rows)."""
+    import store as store_mod
+    sp = HERE / cfg["paths"]["store_file"]
+    q = (q or "").strip()[:200]
+    if not sp.exists() or not q:
+        return "none", []
+    c = _ro(sp)
+    c.row_factory = sqlite3.Row
+    cols = "p.doi, p.title, p.venue, p.published, p.status, p.user_mark, p.cited, p.score, p.user_note"
+    try:
+        if store_mod.fts5_available() and c.execute("SELECT 1 FROM sqlite_master WHERE name='papers_fts'").fetchone():
+            fq = store_mod.fts_query(q, prefix=True)
+            if not fq:
+                return "fts5", []
+            w = ", ".join(str(x) for x in store_mod.FTS_WEIGHTS)
+            rows = c.execute(f"SELECT {cols}, snippet(papers_fts, 2, '[', ']', '…', 14) AS snip FROM papers_fts "
+                             "JOIN papers p ON p.rowid = papers_fts.rowid WHERE papers_fts MATCH ? "
+                             f"ORDER BY bm25(papers_fts, {w}) LIMIT ?", (fq, int(limit))).fetchall()
+            return "fts5", [dict(r) for r in rows]
+        words = re.findall(r"[^\W_]+", q)[:8]
+        cond = " AND ".join("(p.title LIKE ? OR p.abstract LIKE ?)" for _ in words) or "0"
+        rows = c.execute(f"SELECT {cols}, '' AS snip FROM papers p WHERE {cond} ORDER BY p.published DESC LIMIT ?",
+                         (*[f"%{x}%" for x in words for _ in range(2)], int(limit))).fetchall()
+        return "like", [dict(r) for r in rows]
+    except sqlite3.Error as e:
+        return f"error: {e}", []
+    finally:
+        c.close()
+
+
 def api_get(path, query, jobs):
-    """(http code, JSON object) for GET /api/config and /api/job."""
+    """(http code, JSON object) for GET /api/config, /api/job, /api/active and /api/search."""
+    if path == "/api/search":
+        mode, rows = search_store(load_cfg(), (query.get("q") or [""])[0])
+        return 200, {"ok": True, "mode": mode, "results": rows}
     if path == "/api/config":
         cfg = load_cfg()
         return 200, {"ok": True, "editable": editable(cfg), "status": status(cfg), "job": jobs.view(10 ** 9),
@@ -824,11 +985,17 @@ def api_post(path, req, jobs):
             if action == "pull_data_repo" and req.get("clone_url"):
                 import data_repo
                 url = str(req["clone_url"]).strip()
-                if not CLONE_RX.match(url) or data_repo.REMOTE_MARK not in url:
-                    return 400, {"ok": False, "error": f"not a clone URL of {data_repo.REMOTE_MARK} "
-                                                       "(https://… or git@…, without a user name or token)"}
+                if not CLONE_RX.match(url):
+                    return 400, {"ok": False, "error": "not a clone URL (https://… or git@…, without a user name or token)"}
             _, changed = _save(req)
-            job = jobs.start(action, {k: req.get(k) for k in ("clone_url", "clone_dir")})
+            if action == "init_data_repo":
+                import data_repo
+                spec = str(req.get("spec") or "").strip()
+                try:
+                    data_repo.repo_url(spec)
+                except ValueError as e:
+                    return 400, {"ok": False, "error": str(e)}
+            job = jobs.start(action, {k: req.get(k) for k in ("clone_url", "clone_dir", "spec")})
             return 200, {"ok": True, "changed": changed, "job": job}
     except ValueError as e:
         return 400, {"ok": False, "error": str(e)}
@@ -839,12 +1006,27 @@ def api_post(path, req, jobs):
 
 # ---------- STARTUP.html ----------
 
+def _preset_changes(cfg):
+    """{key: {"base": [[path, value]…], "venues": […] or None}} for applying a preset on the static page."""
+    import presets
+    out = {}
+    for k in presets.PRESETS:
+        try:
+            v = presets.apply_changes(k, cfg, True)
+        except ValueError:
+            v = None
+        out[k] = {"base": presets.apply_changes(k, cfg, False), "venues": v}
+    return out
+
+
 def page_data(cfg):
     import curation
+    import presets
     sync = curation.page_sync_config(cfg)
     return {"edition": "starter" if STARTER else "radar", "editable": editable(cfg), "status": status(cfg),
             "raw": raw_config(), "paths": PATHS, "here": str(HERE), "gui_port": GUI_PORT, "data_url": DATA_URL,
             "commands": commands(cfg), "actions": ACTIONS, "max_pillars": MAX_PILLARS,
+            "presets": presets.summary(), "preset_changes": _preset_changes(cfg),
             "sync": sync if sync.get("hosts") else {}}
 
 
@@ -865,22 +1047,28 @@ def render(data):
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=5">
 <title>IC Paper Radar — Setup &amp; Control Center</title><style>{html_renderer.CSS}{CSS}</style></head>
-<body><header class="bar"><h1>⚙️ Setup &amp; Control Center</h1>
+<body><header class="bar"><h1>⚙️ Setup &amp; Control Center <span class="muted small">v3.0</span></h1>
 <a class="btn" href="DASHBOARD.html">📊 Open Dashboard ↗</a>
 <span id="mode" class="btn pill" title="">⏳ Connecting…</span>
 <span id="dirty" class="dirty" hidden>● unsaved changes</span>
 <button class="btn primary" id="savebtn" onclick="save()">💾 Save config.json</button>
 <button class="btn sec" onclick="theme()" title="light/dark">◐</button></header>
 <main class="cc">
+<section class="card" id="c-deploy"></section>
 <section class="card" id="c-status"></section>
 <section class="card" id="c-run"></section>
 <section class="card" id="c-console" hidden></section>
+<section class="card" id="c-preset"></section>
 <section class="card" id="c-themes"></section>
 <section class="card" id="c-people"></section>
 <section class="card" id="c-repo"></section>
+<section class="card" id="c-search"></section>
 <p class="muted foot">Generated <span id="gen"></span>. Secrets (IEEE key, tokens, <code>.env</code>) are never shown or
 stored here: only whether they are set.</p>
-</main><div id="toast" class="toast" hidden></div>
+</main><div class="bottombar"><span id="dirty2" class="dirty" hidden>● unsaved changes</span>
+<button class="btn" onclick="save()">💾 Save Config</button>
+<button class="btn primary" data-run="rescore_and_seed" onclick="run('rescore_and_seed')">▶ Run &amp; Update My Dashboard</button></div>
+<div id="modal" class="modal" hidden></div><div id="toast" class="toast" hidden></div>
 <script id="cc-data" type="application/json">{blob}</script>
 <script>{JS}</script></body></html>"""
 
@@ -917,6 +1105,17 @@ table.mini{border-collapse:collapse;width:100%;background:none}table.mini td,tab
 .tip{cursor:help;border-bottom:1px dotted var(--muted)}
 .toast{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);background:var(--fg);color:var(--bg);padding:8px 14px;border-radius:10px;z-index:50;font-size:14px;max-width:90vw}
 .cmd{display:flex;gap:6px;align-items:flex-start;margin:4px 0}.cmd code{flex:1;white-space:pre-wrap;word-break:break-all;padding:4px 8px;display:block}
+.dgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px}
+.dcard{display:flex;flex-direction:column;gap:4px;align-items:flex-start;text-align:left;border:1px solid var(--line);border-radius:12px;
+padding:12px;background:var(--bg);color:var(--fg);font:inherit;cursor:pointer}.dcard:hover{border-color:var(--accent)}
+.dcard.on{border:2px solid var(--accent);background:var(--card)}.dcard .di{font-size:24px}div.dcard{cursor:default}
+.dmesh{margin-top:12px;border-top:1px dashed var(--line);padding-top:8px}
+.bottombar{position:sticky;bottom:0;z-index:30;display:flex;gap:8px;justify-content:flex-end;align-items:center;padding:10px 16px;
+background:var(--bg);border-top:1px solid var(--line)}
+.modal{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:60;display:flex;align-items:center;justify-content:center;padding:16px}
+.modal[hidden]{display:none}.mbox{background:var(--card);color:var(--fg);border-radius:14px;max-width:620px;width:100%;padding:18px 20px;
+border:2px solid var(--warn);box-shadow:0 10px 40px rgba(0,0,0,.3)}
+mark{background:var(--citebg);color:inherit;border-radius:3px;padding:0 1px}
 @media (max-width:700px){.pillar .ph .short{width:90px}.kv{grid-template-columns:1fr}}
 """
 
@@ -985,7 +1184,8 @@ function kwPairs() {
 function collect() {
   const u = {positive_keywords: kwPairs(), negative_keywords: S.negative_keywords, negative_override: S.negative_override,
              key1_themes: S.key1_themes, min_score: S.min_score, vip_authors: S.vip_authors, vip_boost: S.vip_boost,
-             anchors: S.anchors, contact_email: S.contact_email, data_repo: S.data_repo, data_repo_dir: S.data_repo_dir};
+             anchors: S.anchors, contact_email: S.contact_email, data_repo: S.data_repo, data_repo_dir: S.data_repo_dir,
+             domain_preset: S.domain_preset, deployment: S.deployment, sync_hosts: S.sync_hosts};
   if (STARTER) {
     u.pillars = KW.pillars.map(p => p.name.trim());
     const sh = KW.pillars.map(p => (p.short || '').trim());
@@ -996,7 +1196,7 @@ function collect() {
 }
 let baseline = '';
 function snapshot() { return JSON.stringify(collect()); }
-function changed() { const d = snapshot() !== baseline; $('#dirty').hidden = !d; return d; }
+function changed() { const d = snapshot() !== baseline; $('#dirty').hidden = !d; $('#dirty2').hidden = !d; return d; }
 function isDirty() { return snapshot() !== baseline; }
 
 // ---------- a chip list: strings, or [key, weight] pairs ----------
@@ -1044,6 +1244,8 @@ function chips(list, o) {
 }
 
 // ---------- 1. setup progress ----------
+function tasteOn() { const t = ST.taste; return !!(t && t.enabled && t.pos >= t.need && t.neg >= t.need); }
+function repoName(u) { return String(u || '').replace(/^https?:\/\/[^/]+\//, '').replace(/^git@[^:]+:/, '').replace(/\.git$/, ''); }
 function renderStatus() {
   const st = ST.store, env = ST.env, dr = ST.data_repo, p = ST.pillars;
   const steps = [
@@ -1059,8 +1261,10 @@ function renderStatus() {
       : '⚪ Using the Crossref / OpenAlex fallback (optional: set the IEEE_API_KEY environment variable)'},
     {ok: env.has_claude, req: false, t: 'Claude CLI', s: env.has_claude ? `🟢 Ready (${env.claude_command})`
       : '⚪ No-LLM mode: scoring, dashboard and seeding work; digests and the weekly synthesis are skipped'},
-    {ok: dr.connected, req: false, t: 'Private data repo', s: dr.connected ? `🟢 Connected to ic-paper-radar-data · ${fmt(dr.papers)} papers · ${dr.peers.length} peer(s)`
-      : '⚪ Not cloned yet (optional, for collaborators): see “Private Shared Repo” below'},
+    {ok: dr.connected, req: false, t: 'Private data repo', s: dr.connected ? `🟢 Connected (${repoName(dr.remote_url) || 'data repo'}) · ${fmt(dr.papers)} papers · ${dr.peers.length} peer(s)` + (dr.read_repos && dr.read_repos.length ? ` · ${dr.read_repos.length} shared repo(s) to read` : '')
+      : '⚪ Not set up (optional): create your own private repo or clone a shared one below'},
+    {ok: tasteOn(), req: false, t: 'Taste model', s: ST.taste ? (tasteOn() ? `🟢 Trained on ${ST.taste.pos}+ / ${ST.taste.neg}− marks (taste:−2…+4 on every score)`
+      : `⚪ ${ST.taste.pos}+ / ${ST.taste.neg}− marks: needs ${ST.taste.need} ✅/⭐/📌 and ${ST.taste.need} 🗄️ archived${ST.taste.enabled ? '' : ' (off in scoring.taste)'}`) : '⚪ –'},
   ];
   const req = steps.filter(x => x.req), done = req.filter(x => x.ok).length;
   const all = steps.filter(x => x.ok).length;
@@ -1078,7 +1282,8 @@ const RUN_TIPS = {
   rescore_and_seed: 'Saves your settings, re-scores every paper with your keywords/authors (--rescore), tops up each pillar to 10 candidates (--seed-pillars 5 --no-claude) and rebuilds DASHBOARD.html. 0 tokens, no API calls except a small Beyond-IEEE search.',
   daily: 'One collection pass now (IEEE / Crossref / OpenAlex) and this week\'s report' + (ST.env.has_claude ? ' with digests (claude -p).' : ' (--no-claude: no Claude CLI found).') + ' On the report day it also finalizes the week.',
   pull_data_repo: 'Read-only: fetch origin/main of ic-paper-radar-data, import every peer overlay, merge new/enriched papers into your store, adopt the external ones ≥ min_score, rebuild the dashboards. Nothing is pushed.',
-  sync_data_repo: '--sync (offline Save-Marks files) then --sync-data-repo: pull, merge, export the clean union, write peers/<you>.json and push a real gain to ic-paper-radar-data.'};
+  sync_data_repo: '--sync (offline Save-Marks files) then --sync-data-repo: pull, merge, export the clean union, write peers/<you>.json and push a real gain to your private data repo; then read the shared repos.',
+  init_data_repo: '--init-data-repo: create (gh) or clone your private repo into paths.data_repo_dir, write the protocol files, your clean corpus and your overlay, push main, and set data_repo.remote_url.'};
 function runBtn(a, extra, primary) {
   return h('button', {class: 'btn' + (primary ? ' primary' : ''), title: RUN_TIPS[a], 'data-run': a,
     onclick: () => run(a, extra)}, D.actions[a]);
@@ -1297,15 +1502,23 @@ function renderRepo() {
   const dr = ST.data_repo;
   const head = dr.connected
     ? h('div', {class: 'kv'},
-        h('b', {}, 'Status'), h('span', {class: 'ok'}, '🟢 Connected to ic-paper-radar-data'),
+        h('b', {}, 'Status'), h('span', {class: 'ok'}, `🟢 Connected to ${repoName(dr.remote_url) || 'your data repo'}`),
         h('b', {}, 'Clone'), h('code', {}, dr.dir),
         h('b', {}, 'Shared corpus'), h('span', {}, `${fmt(dr.papers)} papers in paper_store_clean_share.sqlite`,
           dr.missing_here ? h('span', {class: 'warn'}, ` · ${fmt(dr.missing_here)} not in your store yet`) : (dr.missing_here === 0 ? h('span', {class: 'ok'}, ' · all in your store') : null)),
         h('b', {}, 'Last commit'), dr.commit ? h('span', {}, h('code', {}, dr.commit.hash), ` ${dr.commit.date.replace('T', ' ').slice(0, 16)} · `, h('span', {class: 'muted'}, dr.commit.subject)) : h('span', {class: 'muted'}, '–'),
         h('b', {}, 'You'), h('span', {}, dr.me || '–'))
     : h('div', {},
-        h('p', {class: 'warn'}, '⚠️ Not cloned yet', h('span', {class: 'muted small'}, ` (${dr.reason})`)),
-        h('p', {class: 'small'}, 'A collaborator with read access to the private repo can clone it here and load the shared corpus (papers, abstracts, digests) without a terminal. Git asks you to sign in to GitHub once.'),
+        h('p', {class: 'warn'}, '⚠️ No primary data repo yet', h('span', {class: 'muted small'}, ` (${dr.reason})`)),
+        h('h3', {}, '✨ Option 1: create your own private data repo'),
+        h('p', {class: 'small'}, 'Your corpus, your GitHub account: with the GitHub CLI (gh) signed in, the repo is created for you; otherwise create an empty private repo on github.com first. The protocol files, your clean corpus and your overlay are pushed to main.'),
+        (() => {
+          const spec = h('input', {class: 'in mono', size: 34, placeholder: 'your-name/my-paper-radar-data', 'aria-label': 'owner/name or URL'});
+          return h('div', {class: 'row'}, spec, h('button', {class: 'btn primary', 'data-run': 'init_data_repo', title: RUN_TIPS.init_data_repo,
+            onclick: () => { const v = spec.value.trim(); if (!v) return alert('Type owner/name (or a clone URL) first.'); run('init_data_repo', {spec: v}); }}, D.actions.init_data_repo));
+        })(),
+        h('h3', {}, '📥 Option 2: clone a data repo someone shared with you'),
+        h('p', {class: 'small'}, 'A collaborator with access can clone it here and load the shared corpus (papers, abstracts, digests) without a terminal. Git asks you to sign in to GitHub once. (Read access only? Add it under “Shared repos to read” instead.)'),
         (() => {
           const url = h('input', {class: 'in wide mono', value: D.data_url, 'aria-label': 'clone URL'});
           const dir = h('input', {class: 'in wide mono', value: S.data_repo_dir || '../ic-paper-radar-data', 'aria-label': 'clone folder'});
@@ -1324,11 +1537,20 @@ function renderRepo() {
     : h('p', {class: 'muted small'}, 'No peer overlays yet.');
   const dro = S.data_repo;
   const ax = STARTER ? S.arxiv : null;
+  const rr = (dr.read_repos || []);
+  const reads = h('div', {}, h('h3', {}, '📚 Shared repos to read (data_repo.read_repos)'),
+    h('p', {class: 'small muted'}, 'Private data repos your collaborators shared with you (read access is enough): pulled into <data_repo_dir>_peers/, merged into your store, never pushed. owner/name, a clone URL or a local folder.'),
+    chips(dro.read_repos, {placeholder: 'colleague/their-paper-radar-data', size: 34,
+      check: v => (/^[A-Za-z0-9][\w.-]*\/[\w.-]+$/.test(v) || /^(https:\/\/[A-Za-z0-9.-]+\/|git@[A-Za-z0-9.-]+:)[\w.-]+\/[\w.-]+$/.test(v) || /[\\/]/.test(v)) ? null : 'owner/name, https://…, git@… or a folder'}),
+    rr.length ? h('table', {class: 'mini'}, h('tbody', {}, rr.map(x => h('tr', {}, h('td', {class: 'small'}, h('code', {}, x.spec)),
+      h('td', {class: 'small'}, x.error ? h('span', {class: 'warn'}, x.error) : (x.ready ? `🟢 ${fmt(x.papers)} papers` : '⏳ pulled on the next 📥 Read')))))) : null);
   fill($('#c-repo'), h('h2', {}, '🤝 Private Shared Repo & Peer Sync'), head,
     h('h3', {}, 'Peers'), peers,
     h('h3', {}, 'My sharing'), h('p', {id: 'sharestats', class: 'small'}),
     h('div', {class: 'row'}, h('label', {}, 'peer_id ', h('input', {class: 'in', size: 18, maxlength: 39, value: dro.peer_id, placeholder: dr.me || 'your-name',
-        title: 'Your name in the shared repo (peers/<peer_id>.json). Empty = the clone\'s git user.name.', oninput: e => { dro.peer_id = e.target.value.trim(); changed(); }}))),
+        title: 'Your name in the shared repo (peers/<peer_id>.json). Empty = the clone\'s git user.name.', oninput: e => { dro.peer_id = e.target.value.trim(); changed(); }})),
+      h('label', {style: 'flex:1'}, 'remote_url ', h('input', {class: 'in mono', style: 'flex:1;min-width:240px', value: dro.remote_url, placeholder: 'https://github.com/you/your-paper-radar-data.git',
+        title: 'Your primary private data repo. A new computer clones it into paths.data_repo_dir automatically.', oninput: e => { dro.remote_url = e.target.value.trim(); changed(); }}))),
     h('div', {class: 'row'}, toggle(dro, 'share_curation', 'share my curation', 'Write peers/<peer_id>.json (pillars, marks, ⭐, notes) so collaborators see your radar'),
       toggle(dro, 'share_notes', 'share my 🏷️ notes', 'Include your Tech notes in the overlay'),
       toggle(dro, 'adopt_external', 'adopt shared papers ≥ min_score', 'Merged papers that score ≥ min_score with your keywords join your archive (and can reach your pillars)')),
@@ -1341,12 +1563,101 @@ function renderRepo() {
             (ax.must_all || []).map(g => g.join(', ')).join('\n')))),
       h('div', {class: 'grid2'}, h('div', {}, h('div', {class: 'small muted'}, 'Categories (empty = all)'), chips(ax.categories, {placeholder: 'e.g. cs.AR', check: v => /^[a-z-]+(\.[A-Za-z-]+)?$/.test(v) ? null : 'An arXiv category looks like cs.AR or eess.SP'})),
         h('div', {}, h('div', {class: 'small muted'}, 'exclude_any'), chips(ax.exclude_any, {placeholder: 'e.g. quantum'})))) : null,
+    reads,
     h('h3', {}, 'Sync'), h('div', {class: 'runbar'}, runBtn('pull_data_repo'), runBtn('sync_data_repo')),
-    h('p', {class: 'muted small'}, dr.connected ? 'Read = pull only (safe any time). Full Sync also pushes; on the Minisforum radar it runs automatically on Fridays at 12:30.' : 'Both need the clone above.'));
+    h('p', {class: 'muted small'}, dr.connected ? 'Read = pull only from your repo and every shared repo (safe any time). Full Sync also pushes to your repo' + (STARTER ? '.' : '; on the Minisforum radar it runs automatically on Fridays at 12:30.')
+      : (dro.read_repos.length ? 'Read works now (shared repos only); Full Sync needs your own repo above.' : 'Both need a data repo above.')));
   renderRepoStats(); lockRun();
 }
 
-function renderAll() { renderStatus(); renderRun(); renderThemes(); renderPeople(); renderRepo(); lockRun(); }
+// ---------- v3.0: deployment selector (💻 / 🌐 / 🏢 easter egg) ----------
+function modal(title, body, buttons) {
+  const m = $('#modal');
+  fill(m, h('div', {class: 'mbox', role: 'dialog', 'aria-modal': 'true'}, h('h2', {}, title), body,
+    h('div', {class: 'runbar', style: 'justify-content:flex-end;margin-top:14px'}, buttons)));
+  m.hidden = false;
+  m.onclick = e => { if (e.target === m) m.hidden = true; };
+}
+function enterprise() {
+  modal('🚧 ERROR 402: COFFEE & CONSULTING BUDGET REQUIRED', h('div', {},
+    h('p', {}, 'Deploying a multi-tenant public cluster with Kubernetes, corporate SSO, firewall traversal, and legal compliance is NOT a problem I solve for free! 😂 Either switch back to Single PC / Tailscale Virtual LAN ($0 and works in 2 minutes), or bring specialty coffee and contact the author at github.com/jdong-p!'),
+    h('p', {class: 'muted'}, '部署带 Kubernetes、企业 SSO、防火墙穿透和合规审查的多租户公共集群？这可不是免费解决的问题！😂 要么切回单机 / Tailscale 虚拟局域网（零成本，两分钟搞定），要么带上精品咖啡，到 github.com/jdong-p 联系作者！'),
+    h('p', {class: 'small muted'}, 'Nothing was changed in config.json.')),
+    [h('button', {class: 'btn primary', onclick: () => { $('#modal').hidden = true; S.deployment = 'local'; renderDeploy(); changed(); }}, '😅 Back to Single PC'),
+     h('a', {class: 'btn', href: 'https://github.com/jdong-p/ic-paper-radar', target: '_blank', rel: 'noopener'}, '⭐ Star / Contact on GitHub')]);
+}
+function renderDeploy() {
+  const dp = ST.deploy || {}, cur = S.deployment;
+  const card = (k, icon, title, sub, onclick) => h('button', {class: 'dcard' + (cur === k ? ' on' : ''), onclick}, h('span', {class: 'di'}, icon),
+    h('b', {}, title), h('span', {class: 'muted small'}, sub));
+  const mesh = cur === 'mesh_lan' ? h('div', {class: 'dmesh'},
+    h('h3', {}, '🌐 LAN / Tailscale hosts (sync_server.hosts)'),
+    h('p', {class: 'small muted'}, STARTER
+      ? `The --gui server also listens on these private-LAN / Tailscale IPs (port ${dp.gui_port}), each behind the per-launch key; its links are in _system/gui_link.txt. Only addresses like 192.168.x.x, 10.x.x.x or 100.64–127.x.x (Tailscale) are used.`
+      : `radar_sync_server.py answers on :${dp.port}; these hosts are the addresses your pages try (127.0.0.1 first). Your phone opens the key link from Open_on_iPhone.txt once.`),
+    chips(S.sync_hosts, {placeholder: 'e.g. 192.168.8.105 or 100.x.y.z', check: v => /^[A-Za-z0-9][A-Za-z0-9.-]{0,99}$/.test(v) ? null : 'A host name or IP address'}),
+    h('div', {class: 'row small'}, dp.phone_link ? h('a', {href: dp.phone_link}, '📱 Open_on_iPhone.txt (the key link for your phone)') : null,
+      dp.gui_link ? h('span', {class: 'muted'}, `🔑 GUI links: ${dp.gui_link}`) : null),
+    h('h3', {}, '🗓️ Task Scheduler (copy into a terminal on the radar computer)'),
+    (dp.tasks || []).map(cmdRow)) : null;
+  fill($('#c-deploy'), h('h2', {}, '🖥️ Deployment', h('span', {class: 'muted small'}, 'where the radar runs and who can reach it')),
+    h('div', {class: 'dgrid'},
+      card('local', '💻', 'Single PC / Standalone', 'GUI and sync on 127.0.0.1 only · local SQLite + your private GitHub data repo', () => { S.deployment = 'local'; renderDeploy(); changed(); }),
+      card('mesh_lan', '🌐', 'Virtual Mesh LAN Hub', 'Tailscale / ZeroTier + a mini-PC · phone and laptops over the tailnet', () => { S.deployment = 'mesh_lan'; renderDeploy(); changed(); }),
+      card('enterprise', '🏢', 'Enterprise / Public Multi-Tenant', 'Kubernetes, SSO, the works…', enterprise)),
+    mesh);
+}
+
+// ---------- v3.0: domain presets ----------
+let PRESET_PENDING = null;  // static page: [[path, value]…] to apply on 💾 Save
+async function applyPreset(k) {
+  const pr = D.presets.find(x => x.key === k);
+  if (!confirm(`Switch this radar to the “${pr.icon} ${pr.label}” preset?\n\nIt sets domain_preset and its evidence cues (badge: ${pr.badge.si_icon} ${pr.badge.si} / ${pr.badge.sim_icon} ${pr.badge.sim}). Your pillars, keywords and marks stay as they are.`)) return;
+  const rv = pr.venues.length && confirm(`Also REPLACE your venue list with the preset's ${pr.venues.length} starter venues?\n\n${pr.venues.join(', ')}\n\nOK = replace · Cancel = keep my venues`);
+  if (API) {
+    const r = await call('POST', '/api/config', {config: {apply_preset: {key: k, replace_venues: !!rv}}});
+    if (!r.ok) return alert('Not applied: ' + r.error);
+    ST = r.status; S = r.editable; buildKW(); renderAll(); baseline = snapshot(); changed();
+    return toast(`Preset applied: ${r.changed.join(', ') || 'nothing changed'}. ▶ Run & Update re-scores with it.`, 6000);
+  }
+  const c = D.preset_changes[k];
+  PRESET_PENDING = rv && c.venues ? c.venues : c.base;
+  S.domain_preset = k; renderPreset(); changed();
+  toast('Preset staged: 💾 Save config.json writes it.', 5000);
+}
+function renderPreset() {
+  fill($('#c-preset'), h('h2', {}, '🧭 Domain preset', h('span', {class: 'muted small'}, 'IC design is the default; the radar works for other fields too')),
+    h('div', {class: 'dgrid'}, D.presets.map(pr => h('div', {class: 'dcard' + (S.domain_preset === pr.key ? ' on' : '')},
+      h('span', {class: 'di'}, pr.icon), h('b', {}, pr.label), h('span', {class: 'muted small'}, pr.sources),
+      h('span', {class: 'small'}, `${pr.badge.si_icon} ${pr.badge.si} · ${pr.badge.sim_icon} ${pr.badge.sim}`),
+      S.domain_preset === pr.key ? h('span', {class: 'tag'}, 'active') : h('button', {class: 'btn small', onclick: () => applyPreset(pr.key)}, 'Apply')))),
+    h('p', {class: 'muted small'}, 'A venue with "source": "pubmed" (NCBI E-utilities; "query" = a PubMed term, empty = your strongest keywords) or "biorxiv" / "medrxiv" (api.biorxiv.org; optional "categories") is fetched by those adapters; other venues by Crossref (ISSN) and the IEEE API.'));
+}
+
+// ---------- v3.0: full-text search (FTS5, bm25) ----------
+let SEARCH_T = null;
+const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
+function renderSearch() {
+  const inp = h('input', {class: 'in wide', placeholder: 'Search the whole store: title ×5, 🏷️ notes ×3, index terms, authors, abstract (e.g. “bootstrapped switch”, Makinwa)…'});
+  const out = h('div', {id: 'sresults'});
+  inp.addEventListener('input', () => { clearTimeout(SEARCH_T); SEARCH_T = setTimeout(() => doSearch(inp.value, out), 250); });
+  fill($('#c-search'), h('h2', {}, '🔎 Search the store', h('span', {class: 'muted small'}, ST.store.fts ? 'SQLite FTS5 · bm25 · milliseconds' : 'LIKE search (no FTS5 index yet)')),
+    API ? [inp, out] : h('p', {class: 'muted small'}, 'Needs the Control Center server (Start_Radar_GUI / briefing.py --gui, or the radar\'s sync server). In a terminal: python briefing.py --recall "<words>".'));
+}
+async function doSearch(q, out) {
+  if (!q.trim()) return fill(out);
+  const r = await call('GET', '/api/search?q=' + encodeURIComponent(q));
+  if (!r.ok) return fill(out, h('p', {class: 'warn small'}, r.error || 'search failed'));
+  const mark = t => esc(t || '').replace(/\[/g, '<mark>').replace(/\]/g, '</mark>');
+  fill(out, h('p', {class: 'muted small'}, `${r.results.length} best matches (${r.mode})`),
+    h('table', {class: 'mini'}, h('tbody', {}, r.results.map(x => h('tr', {},
+      h('td', {class: 'small'}, `${x.venue || ''} ${(x.published || '').slice(0, 4)}`),
+      h('td', {}, h('a', {href: 'https://doi.org/' + x.doi, target: '_blank', rel: 'noopener'}, x.title),
+        h('div', {class: 'muted small', html: mark(x.snip)}), x.user_note ? h('div', {class: 'small'}, '🏷️ ' + x.user_note) : null),
+      h('td', {class: 'small'}, [x.user_mark === 'selected' ? '✅' : '', x.cited ? '⭐' : '', x.user_mark === 'archived' ? '🗄️' : '', x.status].join(' ')))))));
+}
+
+function renderAll() { renderDeploy(); renderStatus(); renderRun(); renderPreset(); renderThemes(); renderPeople(); renderRepo(); renderSearch(); lockRun(); }
 window.addEventListener('beforeunload', e => { if (isDirty()) { e.preventDefault(); e.returnValue = ''; } });
 
 // ---------- saving ----------
@@ -1365,6 +1676,7 @@ async function save() {
     if (k === 'data_repo' || k === 'arxiv') for (const [kk, vv] of Object.entries(v)) setPath(raw, [k, kk], vv);
     else setPath(raw, D.paths[k], k === 'positive_keywords' ? Object.fromEntries(v) : v);
   }
+  for (const [path, v] of PRESET_PENDING || []) if (path.join('.') !== 'domain_preset') setPath(raw, path, v);
   const text = JSON.stringify(raw, null, 4) + '\n';
   if (window.showSaveFilePicker) {
     try {
@@ -1376,7 +1688,7 @@ async function save() {
   }
   const a = h('a', {href: URL.createObjectURL(new Blob([text], {type: 'application/json'})), download: 'config.json'});
   document.body.append(a); a.click(); a.remove();
-  baseline = snapshot(); changed();
+  baseline = snapshot(); changed(); PRESET_PENDING = null;
   toast(`Downloaded config.json: move it into ${D.here} (replace the old one), then run the radar.`, 8000);
 }
 
@@ -1458,7 +1770,7 @@ class GuiHandler(BaseHTTPRequestHandler):
 
     def _host_ok(self):
         port = self.server.server_address[1]
-        return self.headers.get("Host", "") in (f"127.0.0.1:{port}", f"localhost:{port}")
+        return self.headers.get("Host", "") in {f"{a}:{port}" for a in getattr(self.server, "allowed", ("127.0.0.1", "localhost"))}
 
     def _cookie_ok(self):
         c = http.cookies.SimpleCookie(self.headers.get("Cookie", ""))
@@ -1527,8 +1839,11 @@ class GuiHandler(BaseHTTPRequestHandler):
 
 
 def serve_gui(cfg, port=None, open_browser=True):
-    """python briefing.py --gui [PORT]: the Control Center on http://127.0.0.1 until Ctrl+C. Returns 0."""
-    write_startup(cfg)
+    """python briefing.py --gui [PORT]: the Control Center on http://127.0.0.1 until Ctrl+C. In the 🌐 mesh_lan
+    deployment it also listens on the private-LAN / Tailscale IPs listed in sync_server.hosts (only such
+    addresses, never 0.0.0.0), each behind the same per-launch key. The key links also go to
+    _system/gui_link.txt (for a server started at logon without a console). Returns 0."""
+    write_startup(cfg, log=lambda m: None)
     srv = None
     for p in ([port] if port else [GUI_PORT, 0]):
         try:
@@ -1538,13 +1853,43 @@ def serve_gui(cfg, port=None, open_browser=True):
             continue
     if srv is None:
         raise SystemExit(f"[ERROR] port {port} on 127.0.0.1 is in use: choose another one (--gui PORT)")
-    srv.key, srv.jobs = secrets.token_urlsafe(24), Jobs()
-    url = f"http://127.0.0.1:{srv.server_address[1]}/?k={srv.key}"
+    srv.key, srv.jobs, srv.allowed = secrets.token_urlsafe(24), Jobs(), ("127.0.0.1", "localhost")
+    servers = [srv]
+    if deployment(cfg) == "mesh_lan":
+        for h in (cfg.get("sync_server") or {}).get("hosts") or []:
+            if not _lan_ip(h):
+                continue
+            try:
+                extra = ThreadingHTTPServer((h, srv.server_address[1]), GuiHandler)
+            except OSError as e:
+                print(f"[WARN] --gui: can't listen on {h}: {e}", file=sys.stderr)
+                continue
+            extra.key, extra.jobs, extra.allowed = srv.key, srv.jobs, (h,)
+            threading.Thread(target=extra.serve_forever, daemon=True).start()
+            servers.append(extra)
+    links = [f"http://{s.server_address[0]}:{s.server_address[1]}/?k={srv.key}" for s in servers]
+    url = links[0]
+    try:
+        import curation
+        (curation.system_dir(cfg) / "gui_link.txt").write_text(
+            "IC Paper Radar Control Center (this launch only; don't share these links):\n" + "\n".join(links) + "\n",
+            encoding="utf-8")
+    except Exception:
+        pass
+    if sys.stdout is None:  # pythonw at logon: the links are in _system/gui_link.txt
+        try:
+            srv.serve_forever()
+        finally:
+            for s in servers:
+                s.server_close()
+        return 0
     print("IC Paper Radar — Setup & Control Center\n"
-          f"  {url}\n"
+          + "".join(f"  {u}\n" for u in links)
           + ("Opening it in your browser. " if open_browser else "Open this link in your browser. ")
           + "Keep this window open while you use the page; Ctrl+C (or closing it) stops it.\n"
-          "The link works only on this computer, and only until this window is closed.", flush=True)
+          + ("The links work until this window is closed. The LAN / Tailscale ones hold this launch's key: "
+             "don't share them." if len(links) > 1 else
+             "The link works only on this computer, and only until this window is closed."), flush=True)
     if open_browser:
         webbrowser.open(url)
     try:
@@ -1552,5 +1897,6 @@ def serve_gui(cfg, port=None, open_browser=True):
     except KeyboardInterrupt:
         print("Stopped.")
     finally:
-        srv.server_close()
+        for s in servers:
+            s.server_close()
     return 0

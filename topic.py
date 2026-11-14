@@ -230,16 +230,29 @@ def _decorate(body, by_id, recalled):
     return "\n".join(out)
 
 
+def local_candidates(store, groups):
+    """The store's papers that can pass relevance(): with FTS5 only those matching any plain term of the groups
+    (bm25 order, 'rank' set), else every paper. relevance() needs all groups but one, so the prefilter is exact
+    when at most one group is regex-only (re:…); otherwise, or without groups, every paper is checked."""
+    import store as store_mod
+    n = len(groups)
+    rx_only = sum(1 for g in groups if all(str(t).startswith("re:") for t in g))
+    if not getattr(store, "fts", False) or not n or rx_only > (1 if n >= 2 else 0):
+        return store.where("1=1")
+    q = store_mod.fts_any([t for g in groups for t in g])
+    return store.fts_search(None, limit=1_000_000, match=q) if q else store.where("1=1")
+
+
 def recall(query, cfg, store, log=print, top=25):
     """Local-only search over the whole store (archived marks and the backfilled corpus included):
     0 API calls, 0 tokens. Writes Topic_Dives/<date>_recall_<slug>.md with curation boxes."""
     groups, limit = parse_query(query, cfg)
     hits = []
-    for p in store.where("1=1"):
+    for p in local_candidates(store, groups):  # v3.0: FTS5 prefilter (bm25 breaks ties)
         r = relevance(p, groups, limit, cfg)[0]
         if r > 0:
             hits.append((r, p))
-    hits.sort(key=lambda x: (-x[0], str(x[1].get("published") or "")))
+    hits.sort(key=lambda x: (-x[0], x[1].get("rank") or 0, str(x[1].get("published") or "")))
     L = [f"# Recall: {query}", "", f"*{date.today():%d %b %Y} · local store only ({len(hits)} matches, top {top} shown) · "
          "0 API calls, 0 tokens*", ""]
     for r, p in hits[:top]:
@@ -263,7 +276,7 @@ def run(query, cfg, store, max_ieee, claude, log=print, use_claude=True):
     log(f"Topic: {query}\n  concept groups: {[g[:3] for g in groups]}  power ceiling: {limit} nW")
 
     # Stage A — local store + OpenAlex (0 IEEE calls)
-    found = {p["doi"]: p for p in store.where("1=1")}
+    found = {p["doi"]: p for p in local_candidates(store, groups)}  # v3.0: FTS5 prefilter
     found = {d: p for d, p in found.items() if relevance(p, groups, limit, cfg)[0] > 0}
     log(f"  local store: {len(found)} relevant")
     for d, p in openalex_search(groups, cfg, log).items():
