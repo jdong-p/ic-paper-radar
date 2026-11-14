@@ -31,6 +31,10 @@ TBioCAS、Sensors Letters），并可选跟踪 Nature / Science。它按照**你
   citations) and recent work on any topic.
 - **Silicon vs. simulation / 流片验证标记:** measured-silicon papers get a ✅ badge and a small bonus;
   simulation-only papers are flagged ⚠️.
+- **No terminal needed / 无需命令行:** double-click `Start_Radar_GUI.cmd` (Windows) or
+  `Start_Radar_GUI.command` (macOS) to open the **Setup & Control Center** (`output/STARTUP.html`): edit
+  pillars, keywords, authors, anchors and sharing, connect the shared data repo and run the radar from your
+  browser. 双击启动器即可在浏览器中配置方向、关键词、作者与共享，并一键运行雷达。
 - **Free data sources / 免费数据源:** Crossref and OpenAlex (no key). A free IEEE API key and the
   Claude Code CLI are optional extras.
   使用 Crossref 和 OpenAlex（无需 key）；免费 IEEE API key 和 Claude Code CLI 为可选项。
@@ -108,6 +112,35 @@ automatically (see "Updating").
 命中关键词的权重之和。`config.json` 中的 `pillars`、`positive_keywords`、`negative_keywords`、`anchors`、
 `vip_authors` **特意留空**；填写之前运行 `python briefing.py` 会提示 `[SETUP REQUIRED]` 并停止（只有 `--topic`
 和 `--recall` 不需要 pillars）。
+
+### Without an AI agent or a terminal: the Setup & Control Center / 不用 AI、不用命令行：控制中心
+
+Double-click **`Start_Radar_GUI.cmd`** (Windows) or **`Start_Radar_GUI.command`** (macOS; the first time,
+right-click → Open), or run `python briefing.py --gui`. A small server starts on `http://127.0.0.1:18766`
+(this computer only) and opens **`STARTUP.html`** in your browser. Keep its window open while you use it.
+双击 `Start_Radar_GUI.cmd`（Windows）或 `Start_Radar_GUI.command`（macOS，首次需右键 → 打开），或运行
+`python briefing.py --gui`：浏览器中会打开控制中心 `STARTUP.html`（只在本机 127.0.0.1 上运行）。
+
+- **Setup progress:** papers in your store, pillars, contact e-mail, and whether an IEEE key and the
+  Claude CLI are available (shown as yes/no only: keys are never displayed).
+- **Research themes:** add, rename, reorder or remove pillars; add keyword chips with a weight (e.g.
+  `bootstrapped switch` · 5) under each pillar; negative keywords, the negative override, Beyond-IEEE
+  themes and `min_score`. VIP authors, `vip_boost` and anchor DOIs (with their titles once fetched).
+- **Private shared repo:** connection status, the shared corpus size, the last commit, every peer (with a
+  link to their page), what you share, and the sharing switches. Not cloned yet? Paste the repo URL and
+  click **📥 Clone & Connect** (Git asks you to sign in to GitHub once).
+- **Buttons:** **▶ Run & Update My Dashboard** (save, adopt shared papers that fit, `--rescore`,
+  `--seed-pillars 5 --no-claude`), **🌐 Fetch New Papers Now** (a collection pass), **📥 Read from Private
+  Repo** (pull only) and **🔄 Full Sync** (`--sync` + `--sync-data-repo`, pushes). The output streams into
+  the page.
+- **💾 Save config.json** writes only the settings you changed; everything else in the file stays as it is
+  (the previous file is kept in `output/_system/config.backup.json`).
+
+`STARTUP.html` is rewritten with the dashboard on every run (**⚙️ Setup & Manage** in the dashboard's
+header opens it). Opened as a plain file, it still shows everything and lets you edit: 💾 Save then
+downloads a new `config.json` to put in this folder, and each button shows the command to run.
+每次运行都会与面板一起重写 `STARTUP.html`（面板顶部 **⚙️ Setup & Manage**）。直接以文件打开时也能查看和编辑：
+保存会下载新的 `config.json`，按钮会显示要运行的命令。
 
 ### With Claude Code (in this folder) / 使用 Claude Code（在本目录中）
 
@@ -381,8 +414,9 @@ python briefing.py --export-share D:/share/radar.sqlite   # or any path (also: "
 
 If you and a colleague keep one paper corpus in a shared (private) Git repo whose single file is
 `paper_store_clean_share.sqlite`, clone it **next to** this folder (`../ic-paper-radar-data`, or set
-`"data_repo_dir"` under `"paths"`), then one command keeps both of you in sync:
-如果你和同事用一个共享（私有）Git 仓库维护同一个论文库，把它克隆到本目录旁边，然后只需一条命令：
+`"data_repo_dir"` under `"paths"`), then one command keeps both of you in sync (or the **📥 Read** / **🔄 Full Sync** buttons of the Setup &
+Control Center, which can also clone the repo for you):
+如果你和同事用一个共享（私有）Git 仓库维护同一个论文库，把它克隆到本目录旁边，然后只需一条命令（或控制中心的按钮）：
 
 ```bash
 python briefing.py --sync-data-repo
@@ -508,6 +542,8 @@ switches to `--no-claude` by itself and everything else still works. Add `--no-c
 | `python briefing.py --merge-store OTHER.sqlite [--peer NAME]` | Merge someone else's store: fill gaps, new papers as `external` |
 | `python briefing.py --adopt-external` | Move external papers that fit your pillars into your archive |
 | `python briefing.py --sync-data-repo` | Sync with a shared corpus repo: fetch, merge, export, push if the remote gains (also on Fridays) |
+| `python briefing.py --pull-data-repo` | Read only: fetch the shared corpus repo, import the peers' radars, merge its papers (no push) |
+| `python briefing.py --gui [PORT]` | Setup & Control Center in your browser (`Start_Radar_GUI.cmd` / `.command` do the same) |
 | `python briefing.py --lineage` | Conference ↔ journal links for every catalog paper |
 | `python briefing.py --finalize` | Finalize this week's report now |
 | `--no-claude` | Add to any command: no AI calls |
@@ -521,6 +557,7 @@ switches to `--no-claude` by itself and everything else still works. Add `--no-c
 | `config.example.json` | The starter template and the defaults for any key your `config.json` lacks / 模板与默认值 |
 | `config_file.py` | Creates `config.json` from the template, merges it over the defaults |
 | `briefing.py` | The command you run / 运行入口 |
+| `Start_Radar_GUI.cmd`, `Start_Radar_GUI.command`, `control_center.py` | The Setup & Control Center (`output/STARTUP.html`, `--gui`) / 控制中心 |
 | `fetcher.py`, `topic.py`, `relations.py`, `pins.py` | Collection, scoring, deep-dives, lineage, pinning |
 | `catalog.py`, `html_renderer.py`, `curation.py` | Master table, BibTeX, dashboard, ✅/⭐/🗄️ marks |
 | `store.py`, `paths.py`, `env_guard.py` | Paper store, output paths (`./output`), portable mode |
@@ -616,3 +653,6 @@ The shared corpus (`--sync-data-repo`) lives in a separate repo and isn't affect
 | `xcrun: error` (macOS) | Install Python from python.org, or run `xcode-select --install` once |
 | No pillar pills under 📅 Weekly Brief | Run `--rescore` and `--seed-pillars 5` after editing `config.json` |
 | A 🏷️ note or click didn't reach `MASTER_TABLE.md` | 💾 Save Marks, then `python briefing.py --sync` |
+| `STARTUP.html` shows **⚪ Static** and the buttons only show commands | It was opened as a file: start `Start_Radar_GUI.cmd` / `.command` (or `python briefing.py --gui`) |
+| macOS: "Start_Radar_GUI.command can't be opened" | Right-click → Open once; if it isn't executable, run `chmod +x Start_Radar_GUI.command` |
+| Full Sync: `Please tell me who you are` (older versions) | Update; the sync now commits as your `peer_id` when Git has no name/e-mail set |

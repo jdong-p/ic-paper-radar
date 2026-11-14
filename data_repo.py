@@ -2,6 +2,7 @@
 and let each one see the others' radars.
 
   python briefing.py --sync-data-repo      (also runs after every Friday finalize when the clone exists)
+  python briefing.py --pull-data-repo      read only: steps 1-2 below, nothing exported or pushed (pull())
 
 The repo (a private Git repo named ic-paper-radar-data) holds paper_store_clean_share.sqlite (clean: no marks,
 notes, pillars or scores) and peers/<peer_id>.json, one curation overlay per collaborator (their pillar names
@@ -120,6 +121,15 @@ def _gain(remote, new):
     return added, better
 
 
+def _identity(repo, me):
+    """git -c options for the sync commit when this computer has no git identity (a fresh Git install): commit as
+    the peer id with a placeholder address, set for that one commit only (nothing is written to any git config)."""
+    have = [_git(repo, "config", k, check=False).stdout.strip() for k in ("user.name", "user.email")]
+    if all(have):
+        return []
+    return ["-c", f"user.name={me}", "-c", f"user.email={me}@ic-paper-radar.local"]
+
+
 def check_clone(repo):
     """None if `repo` is a clone of the data repo, else the reason it isn't."""
     if not (repo / ".git").exists():
@@ -208,7 +218,7 @@ def _round(store, store_path, cfg, repo, me, adopt, secrets, push, log):
         return True, s["papers"], peers
     what = [f"{s['papers']} papers, +{added} new, {better} enriched"] if (added or better) else []
     what += [f"{me}'s radar ({ov_rows} rows)"] if ov_changed else []
-    _git(repo, "commit", "-m", f"Sync shared corpus ({'; '.join(what)})")
+    _git(repo, *_identity(repo, me), "commit", "-m", f"Sync shared corpus ({'; '.join(what)})")
     if not push:
         log("  4. committed locally (no push)")
         return True, s["papers"], peers
@@ -218,6 +228,36 @@ def _round(store, store_path, cfg, repo, me, adopt, secrets, push, log):
         return False, s["papers"], peers
     log(f"  4. pushed: {'; '.join(what)}")
     return True, s["papers"], peers
+
+
+def pull(store, cfg, adopt=None, log=print):
+    """Read only (briefing.py --pull-data-repo, STARTUP.html's 📥 Read from Private Repo): steps 1 and 2 of a sync.
+    Fetch + reset to origin/main, every other peer's overlay into peer_curation, the shared file merged into this
+    store (+ adopt). Nothing is exported, written into the clone or pushed. Returns {'papers', 'new', 'enriched',
+    'adopted', 'peers'}; raises RuntimeError on any failure."""
+    repo = repo_dir(cfg)
+    why = check_clone(repo)
+    if why:
+        raise RuntimeError(why)
+    me = peer_id(cfg, repo)
+    log(f"Shared corpus (read only): {repo} (this radar: {me})")
+    _git(repo, "fetch", "origin")
+    _git(repo, "reset", "--hard", "origin/main")
+    db = repo / DB_NAME
+    peers = import_peers(store, repo, me, log)
+    out = {"papers": _count(db), "new": 0, "enriched": 0, "adopted": 0, "peers": peers}
+    log(f"  1. remote: {out['papers']} papers" + (", peers " + ", ".join(f"{p} ({n} rows)" for p, n in peers.items())
+                                                  if peers else ", no other peers yet"))
+    if db.exists():
+        st = store_mod.merge_store(store, db, log=lambda m: None)
+        out.update(new=st["new"], enriched=st["enriched"])
+        msg = f"  2. merged: {st['new']} new, {st['enriched']} enriched"
+        if adopt and (cfg.get("data_repo") or {}).get("adopt_external", True):
+            out["adopted"] = adopt(store, cfg)
+            msg += f", {out['adopted']} adopted into the archive (≥ min_score)"
+        log(msg)
+    log("  read only: nothing exported or pushed (🔄 Full Sync / --sync-data-repo does that)")
+    return out
 
 
 def sync(store, store_path, cfg, adopt=None, secrets=(), push=True, log=print):

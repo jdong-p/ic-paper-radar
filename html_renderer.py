@@ -950,12 +950,14 @@ Open <code>README.md</code> to configure your research domains with AI"""
                                 "Click a row for the full digest. Clicks are kept in this browser; <b>💾 Save Marks</b> "
                                 "sends them to the Radar (curation_marks.json in output/ or Downloads), applied on the next "
                                 "run or <code>briefing.py --sync</code>.")
-    Path(path).write_text(_page("IC Paper Radar — Dashboard", "", _bar("📡 IC Paper Radar", extra=TAGS_BTN + _peer_links(peers)),
+    Path(path).write_text(_page("IC Paper Radar — Dashboard", "", _bar("📡 IC Paper Radar", extra=TAGS_BTN + _peer_links(peers) + SETUP_BTN),
                                 body, data, DASH_JS), encoding="utf-8")
     return len(recs)
 
 
 SEARCH_HINT = "Search title, author, venue, numbers, 🏷️ notes (e.g. 'SAR', 'PLL', 'nW', 'ISSCC')…"
+SETUP_BTN = ('<a class="btn sec" href="STARTUP.html" title="Setup & Control Center: pillars, keywords, authors, '
+             'anchors, sharing and the private data repo; run the radar from the browser">⚙️ Setup &amp; Manage</a>')
 TAGS_BTN = ('<button id="tagsbtn" class="btn sec" onclick="toggleTags()" title="Show every row\'s tags '
             '(week, catch-up, anchor, 📈, topic) or collapse them into a +N pill">🏷️ Tags</button>')
 
@@ -1067,6 +1069,11 @@ def write_all(store, cfg, log=print):
     write_phone_link(cfg)
     log(f"HTML: DASHBOARD.html ({n} papers) + {pages} report pages"
         + "".join(f" + Peers/DASHBOARD_{p}.html ({k})" for p, _, k in peers))
+    try:  # the Setup & Control Center next to the dashboard (control_center.py, v2.21)
+        import control_center
+        control_center.write_startup(cfg, log)
+    except Exception as e:
+        log(f"STARTUP.html not written: {e}")
 
 
 def write_phone_link(cfg):

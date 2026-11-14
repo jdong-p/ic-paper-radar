@@ -11,6 +11,8 @@
   python briefing.py --export-share [DST] [--include-curation]   clean share copy of the store (also every Friday)
   python briefing.py --merge-store OTHER.sqlite [--peer NAME] / --adopt-external   bring in someone else's store
   python briefing.py --sync-data-repo     shared corpus repo: fetch + reset, merge, export, push (also on Fridays)
+  python briefing.py --pull-data-repo     shared corpus repo, read only: fetch + reset, peers, merge (no push)
+  python briefing.py --gui [PORT]         Setup & Control Center (STARTUP.html) on http://127.0.0.1 (control_center.py)
 
 Every day (scheduled 07:00): collect (0 tokens) → digest only the *new* candidates (cached per DOI,
 never re-done) → rewrite this week's file Weekly_Briefings/<YYYY-Www>.md ("in progress").
@@ -445,6 +447,19 @@ def sync_data_repo(store, store_path, cfg, push=True, log=print):
     return 0
 
 
+def pull_data_repo(store, cfg, write_html=True, log=print):
+    """--pull-data-repo (STARTUP.html's 📥 Read from Private Repo): data_repo.pull, read only (nothing exported or
+    pushed), then the HTML, so Peers/DASHBOARD_<peer>.html and the dashboard are current. Returns 0 / 1."""
+    try:
+        data_repo.pull(store, cfg, adopt=adopt_external, log=log)
+    except Exception as e:
+        log(f"Shared corpus not read: {e}")
+        return 1
+    if write_html:
+        html_renderer.write_all(store, cfg, log)
+    return 0
+
+
 def backup_store(store, cfg, log=print):
     """Disaster recovery: lock-safe online copy of the store (sqlite3 backup API) to
     IC_Paper_Radar\\_system\\paper_store_backup.sqlite. Written to a .tmp file, checked, then swapped in, so
@@ -505,6 +520,13 @@ def main():
                     help="one-command sync with the shared corpus repo (paths.data_repo_dir, default ../ic-paper-radar-data): "
                          "fetch + reset, merge into this store, export the clean union back, commit + push if changed "
                          "(also on Fridays)")
+    ap.add_argument("--pull-data-repo", action="store_true",
+                    help="read only: fetch + reset the shared corpus repo, import the peers' overlays, merge its papers "
+                         "into this store (+ adopt), rewrite the HTML; nothing is exported or pushed")
+    ap.add_argument("--gui", nargs="?", type=int, const=0, metavar="PORT",
+                    help="Setup & Control Center: STARTUP.html served on http://127.0.0.1:18766 (or PORT) with working "
+                         "buttons, until Ctrl+C (control_center.py)")
+    ap.add_argument("--no-browser", action="store_true", help="with --gui: don't open the browser")
     ap.add_argument("--seed-pillars", type=int, nargs="?", const=-1, metavar="N",
                     help="pull the best N archive papers per pillar (since catch_up.since) into this week now "
                          "(default catch_up.per_pillar), pin the anchors, and fill the Beyond-IEEE board")
@@ -523,6 +545,9 @@ def main():
         a.cite = None
 
     cfg = fetcher.load_config()
+    if a.gui is not None:  # the Setup & Control Center: a local server until Ctrl+C (control_center.py)
+        import control_center
+        return control_center.serve_gui(cfg, a.gui or None, open_browser=not a.no_browser)
     if a.pillar and a.pillar not in catalog.PILLARS:
         ap.error(f"--pillar must be one of {sorted(k for k in catalog.PILLARS if k)} (config.json \"pillars\")")
     if not a.no_claude and not claude_available(cfg):
@@ -547,7 +572,7 @@ def main():
     topic_dir = Path(cfg["paths"]["topic_dir"])
 
     # sharing (v2.16): stand-alone actions, no collection / report
-    if a.merge_store or a.adopt_external or a.export_share is not None or a.sync_data_repo:
+    if a.merge_store or a.adopt_external or a.export_share is not None or a.sync_data_repo or a.pull_data_repo:
         if a.merge_store:
             store_mod.merge_store(store, a.merge_store, a.peer)
             if a.peer and not a.dry_run:  # the peer's page (Peers/DASHBOARD_<peer>.html) and the header link
@@ -556,6 +581,8 @@ def main():
             print(f"Adopted {adopt_external(store, cfg)} external papers into the archive (≥ min_score)")
         if a.export_share is not None:
             export_share(store_path, cfg, a.export_share or None, a.include_curation)
+        if a.pull_data_repo:
+            return pull_data_repo(store, cfg, write_html=not a.dry_run)
         if a.sync_data_repo:  # with --dry-run: on the dry-run copy, committed locally but never pushed
             return sync_data_repo(store, store_path, cfg, push=not a.dry_run)
         return 0

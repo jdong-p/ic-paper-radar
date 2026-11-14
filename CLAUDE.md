@@ -44,6 +44,10 @@ Instructions for an AI agent (Claude Code) opened in this folder:
   `.github/`. Never `git add -f` an ignored file; commit only the files the change needs. A change that
   needs a new setting adds it to `config.example.json` with a blank or neutral default. Don't edit
   `.github/` to make the audit pass.
+- A user without an AI agent or a terminal can use the Setup & Control Center instead: `Start_Radar_GUI.cmd` /
+  `.command` or `python briefing.py --gui` (control_center.py, `output/STARTUP.html`). It edits the same
+  `config.json` keys listed above (plus `data_repo` sharing and `arxiv`), writing only the changed ones.
+  It reports secrets as yes/no flags only. Keep the `--gui` server on 127.0.0.1, behind its per-launch key.
 - Reports and digests are written in English.
 - If `paper_store.sqlite` is missing or empty, say so: the user can request the pre-built database from
   the author (README.md, Step 1) or build one with weekly runs and `--topic` dives.
