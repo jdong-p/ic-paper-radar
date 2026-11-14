@@ -391,11 +391,20 @@ corpus (**🔄 Full Sync**). With **read** access they add your repo to their `"
 ```
 
 **📥 Read / Pull Shared Repos** then fetches your repo and every read repo, merges their papers and shows each
-peer's radar under 👥 Peers. It never pushes to them; the same happens at the end of every Full Sync. Papers
-you read from a shared repo become part of your own clean corpus when you sync (only papers and abstracts,
-never anyone's marks or notes).
+peer's radar under 👥 Peers. It never pushes to them; the same happens at the end of every Full Sync.
 
 **📥 Read / Pull Shared Repos** 只拉取、不推送：合并它们的论文，并在 👥 Peers 中显示每位同事的雷达。
+
+**Reading a repo from another field is safe.** Subscribe to a friend's `bio_med` or `chem_mat` radar just to
+browse it: their papers come into your store as read-only (`external_ro`), searchable and shown on their
+👥 page, which uses **their** preset's badges (e.g. 🧬 Wet-Lab / In-Vivo vs 💻 In-Silico Only) while your own
+dashboard keeps yours. Only the papers that score ≥ `min_score` with your keywords are adopted into your radar
+and go into your own data repo when you sync; the rest are never re-uploaded there. (Papers of your primary
+data repo always round-trip in full.)
+
+**读取其他领域的仓库是安全的。**订阅朋友的 `bio_med` 或 `chem_mat` 雷达仅供浏览：他们的论文以只读方式（`external_ro`）
+进入你的库，可以搜索，并显示在他们的 👥 页面上（使用**他们**预设的验证标记），你自己的面板保持不变。只有按你的关键词
+得分 ≥ `min_score` 的论文会被收入你的雷达，并在同步时进入你自己的数据仓库；其余论文永远不会被重新上传。
 
 ### Co-maintaining one corpus
 *共同维护一个论文库*
@@ -432,8 +441,8 @@ The shared `.sqlite` stays clean, but each sync also writes **your radar** next 
 `peers/<your id>.json`: your pillar names and, for every paper you curated, its pillar, score, ✅ / ⭐ / 🗄️,
 Si call, 🏷️ note and status. It reads your colleague's file and builds a read-only copy of their dashboard,
 **`output/Peers/DASHBOARD_<id>.html`**, linked from your dashboard's header as **👥 <id>'s Radar ↗** (or a
-👥 Peers ▾ menu). It's the same page (search, filters, row details, BibTeX download) with their pillars and
-choices; nothing you click there changes your own radar.
+👥 Peers ▾ menu). It's the same page (search, filters, row details, BibTeX download) with their pillars,
+choices and domain preset (its evidence badges); nothing you click there changes your own radar.
 
 每次同步还会把你的雷达（方向名称、标记、⭐、评分、笔记）写成 `peers/<id>.json`，并为对方生成只读面板
 `output/Peers/DASHBOARD_<id>.html`，在你的面板顶部点击 👥 即可打开。
@@ -453,7 +462,8 @@ with access to the shared repo can read what you publish.
   fields (abstract, authors, references, a missing digest, higher citation counts) are filled in; your marks,
   notes, pillars, scores and weekly state are never touched. New papers arrive as `external` (searchable,
   used for conference ↔ journal links, never pulled into your pillars) until they fit your pillars and are
-  adopted.\
+  adopted. Papers that came only from a `read_repos` entry and weren't adopted are left out of every copy you
+  share.\
   合并他人的库：同一 DOI 只保留一条，只补空字段，从不改动你的标记；新论文标为 `external`，符合你的方向后才会收入。
 - **Safety check:** before a share copy replaces the old one, it is checked for leftover marks or "Pillar:"
   lines and for local user paths (`C:\Users\…`, `/home/…`, `/Users/…`) or your sync token in any text. If

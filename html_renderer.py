@@ -530,7 +530,7 @@ def paper_records(store, cfg, dives=None):
     for p in store.where("user_mark IN ('selected','archived') OR cited=1"):
         pool[p["doi"]] = p
     if cfg.get("dashboard_corpus"):  # Starter Edition: the whole pre-loaded IEEE corpus is searchable under "All"
-        for p in store.where("grp='ieee'"):
+        for p in store.where("grp='ieee' AND status != 'external_ro'"):  # not a read_repos friend's corpus
             pool.setdefault(p["doi"], p)
     keys, kwmap = set(), catalog._kw_pillars(cfg)
     return [_record(p, cfg, kwmap, keys, in_topic) for p in sorted(pool.values(), key=lambda p: p["doi"])]
@@ -1053,10 +1053,14 @@ def write_peer_dashboards(store, cfg, log=print):
     d = Path(cfg["paths"]["onedrive_root"]) / "Peers"
     out = []
     for peer in store_mod.peer_ids(store):
-        recs = peer_records(store, cfg, peer)
+        pk = store.meta(f"peer_preset:{peer}") or ""
+        recs = peer_records(store, {**cfg, "domain_preset": pk} if pk in presets.PRESETS else cfg, peer)
         if not recs:
             continue
         info = store.meta(f"peer_pillars:{peer}") or {}
+        # v3.0.3: the peer's own domain preset (from its overlay): its badges and Si verdict words on its page
+        pk = store.meta(f"peer_preset:{peer}") or ""
+        pcfg = {**cfg, "domain_preset": pk} if pk in presets.PRESETS else cfg
         names = info.get("pillars") or [f"Pillar {k}" for k in range(1, max(r["pillar"] for r in recs) + 1)]
         gen = datetime.now().strftime("%Y-%m-%d %H:%M")
         data = {"generated": gen, "papers": recs, "topics": [], "weeks": [], "readonly": True, "peer": peer,
@@ -1065,9 +1069,11 @@ def write_peer_dashboards(store, cfg, log=print):
                 "pillars": [{"k": f"p{i}", "n": i, "short": catalog.pillar_short(i, name, own=False), "name": name}
                             for i, name in enumerate(names, 1)],
                 "sync": {"hosts": [], "port": 0, "token": "", "timeout": 0},  # no token: this page can't write
-                "badge": presets.badge(cfg)}
+                "badge": presets.badge(pcfg)}
+        field = (f" · {presets.PRESETS[pk]['icon']} {html.escape(presets.PRESETS[pk]['label'])}"
+                 if pk in presets.PRESETS and presets.key(pcfg) != presets.key(cfg) else "")
         upd = f" · updated {html.escape(str(info['updated'])[:16].replace('T', ' '))}" if info.get("updated") else ""
-        body = (f'<div class="peerbanner">👤 Viewing <b>{html.escape(peer)}</b>\'s Radar (Read-Only){upd} · '
+        body = (f'<div class="peerbanner">👤 Viewing <b>{html.escape(peer)}</b>\'s Radar (Read-Only){field}{upd} · '
                 f'<a href="../DASHBOARD.html">← Back to My Dashboard</a></div>'
                 + _dash_body(gen, '<a href="../DASHBOARD.html">My Dashboard</a>',
                              f"{html.escape(peer)}'s pillars, scores, ✅ / ⭐ / 🗄️ choices and 🏷️ notes, from the "

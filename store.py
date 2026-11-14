@@ -11,6 +11,10 @@ status: archive   backfilled corpus paper (for relations; recent ones can join a
         external  brought in by --merge-store from someone else's store (v2.16): shared corpus for --topic /
                   --recall / relations, never pulled into this radar's pillars or board; this radar's own
                   collection adopts it (upsert) when it finds the same DOI
+        external_ro  (v3.0.3) the same, but merged from a data_repo.read_repos entry (someone else's repo, read
+                  only, e.g. a bio_med friend's corpus): left out of this radar's exports, so it never re-uploads
+                  them into its own data repo, until adopted (≥ min_score → archive), found by this radar's own
+                  collection, or also merged from the primary shared repo (→ external)
 user_mark (stage): normal (📋 Candidate) | selected (✅) | archived (🗄️); cited 0/1 (⭐), independent of the
 stage since v2.9 — see curation.py; user_note = the 🏷️ Tech note typed in the dashboard (v2.15)
 """
@@ -185,7 +189,7 @@ class Store:
     def upsert(self, p, status_if_new):
         """Insert a new paper, or fill empty fields of a known one. Returns True if it was new."""
         old = self.get(p["doi"])
-        if old is not None and old["status"] == "external":  # a peer's paper this radar found itself: now ours
+        if old is not None and old["status"] in EXTERNAL:  # a peer's paper this radar found itself: now ours
             self.update(p["doi"], {**{k: v for k, v in p.items() if v and not old.get(k)},
                                    "status": status_if_new, "first_seen": p.get("first_seen") or date.today().isoformat()})
             return True
@@ -282,7 +286,8 @@ BOOKKEEPING = ("lineage_checked",)
 # "nothing here" in a stored value; the share file keeps it as NULL, whichever radar wrote it
 EMPTY = (None, "", "[]", "null")
 EMPTY_TO_NULL = ("authors", "index_terms", "refs", "keyrefs", "related", "lineage", "abstract", "digest", "oa_id")
-SETTLED = ("archive", "external")  # a merge may only move first_seen earlier on these (not on pending / skipped)
+EXTERNAL = ("external", "external_ro")  # merged from someone else's store; external_ro: from a read-only repo
+SETTLED = ("archive", *EXTERNAL)  # a merge may only move first_seen earlier on these (not on pending / skipped)
 ISO_DAY = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
@@ -298,7 +303,7 @@ def _strip_pillar(digest):
 def export_clean_share_db(src_db_path, dst_db_path, include_curation=False, secrets=(), skip_arxiv=False):
     """The share database, from a read-only copy of src (SQLite backup API, safe while the radar runs):
     every row reset to an unmarked 'archive' paper (PERSONAL_RESET), digests without their **Pillar:** line,
-    meta / api_usage / peer_curation emptied, VACUUM. Checked before it replaces dst (atomically, via .tmp):
+    meta / api_usage / peer_curation emptied, VACUUM. Unadopted 'external_ro' rows (read_repos papers) are left out. Checked before it replaces dst (atomically, via .tmp):
     no personal column set, no Pillar line, empty meta, and no FORBIDDEN string or any of `secrets` (e.g. the
     sync token) in any text. include_curation=True keeps marks, notes, pillars, scores and meta (for a
     collaborator who should see them); the text check still runs. skip_arxiv=True leaves out this radar's own
@@ -328,6 +333,8 @@ def export_clean_share_db(src_db_path, dst_db_path, include_curation=False, secr
         s = Store(tmp, fts=False)  # migrates an older store (adds user_note …) so the reset covers every column
         db = s.db
         drop_fts(db)  # v3.0: the share file is a plain papers table (no FTS index), readable by v2.19 radars
+        # v3.0.3: papers merged only from a read_repos entry (someone else's repo) and not adopted stay theirs
+        db.execute("DELETE FROM papers WHERE status='external_ro'")
         db.execute("DELETE FROM api_usage")
         db.execute("DELETE FROM peer_curation")
         if skip_arxiv:
@@ -377,7 +384,7 @@ def export_clean_share_db(src_db_path, dst_db_path, include_curation=False, secr
         raise
 
 
-def merge_store(store, other_db_path, peer=None, log=print):
+def merge_store(store, other_db_path, peer=None, log=print, read_only=False):
     """Bring another researcher's store into this one, one row per DOI (no duplicates):
     - a DOI already here: only empty objective fields (OBJECTIVE) and an empty lineage_checked are filled, the
       larger citation counts are kept, and a missing digest is taken without its **Pillar:** line. first_seen
@@ -388,11 +395,15 @@ def merge_store(store, other_db_path, peer=None, log=print):
       radar's pillars (pillar_replenish reads 'archive') or board;
     - with peer: the other store's own curation (marks, ⭐, notes, chosen pillars) is kept in peer_curation
       under that name (dormant: nothing shows it yet). Without peer it is ignored.
-    The other file is opened read-only. Returns {'new', 'enriched', 'unchanged', 'peer_rows'}."""
+    - read_only (v3.0.3, a data_repo.read_repos entry): new DOIs come in as 'external_ro' (kept out of exports
+      until adopted). Without it (the primary shared repo, --merge-store), an 'external_ro' row whose DOI the
+      other store has too becomes 'external', so a paper of the primary corpus always goes back out.
+    The other file is opened read-only. Returns {'new', 'enriched', 'unchanged', 'peer_rows', 'promoted'}."""
     other = sqlite3.connect(f"file:{Path(other_db_path).as_posix()}?mode=ro", uri=True)
     other.row_factory = sqlite3.Row
     have = {r[1] for r in other.execute("PRAGMA table_info(papers)")}
-    stats = {"new": 0, "enriched": 0, "unchanged": 0, "peer_rows": 0, "earlier": 0}  # earlier: first_seen moved back
+    stats = {"new": 0, "enriched": 0, "unchanged": 0, "peer_rows": 0, "earlier": 0,  # earlier: first_seen moved back
+             "promoted": 0}  # promoted: external_ro → external (the primary repo has it too)
     today = date.today().isoformat()
     try:
         for r in other.execute("SELECT * FROM papers"):
@@ -404,7 +415,7 @@ def merge_store(store, other_db_path, peer=None, log=print):
             digest = _strip_pillar(o.get("digest"))
             if mine is None:
                 row = {k: o.get(k) for k in (*OBJECTIVE, *BOOKKEEPING) if o.get(k)}
-                row.update({"status": "external", "first_seen": _first_seen(o.get("first_seen"), today) or today,
+                row.update({"status": "external_ro" if read_only else "external", "first_seen": _first_seen(o.get("first_seen"), today) or today,
                             "cited_by": o.get("cited_by"),
                             "ieee_cites": o.get("ieee_cites"), "digest": digest or None,
                             "digest_ver": o.get("digest_ver") if digest else None})
@@ -421,9 +432,12 @@ def merge_store(store, other_db_path, peer=None, log=print):
                         fill[k] = o[k]
                 if digest and not mine.get("digest"):
                     fill.update(digest=digest, digest_ver=o.get("digest_ver"))
+                if not read_only and mine.get("status") == "external_ro":
+                    fill["status"] = "external"
+                    stats["promoted"] += 1
                 if fill:
                     store.update(doi, fill)
-                stats["enriched" if set(fill) - {"first_seen"} else "unchanged"] += 1  # an earlier date alone isn't news
+                stats["enriched" if set(fill) - {"first_seen", "status"} else "unchanged"] += 1  # a date alone isn't news
             if peer:
                 cur = {k: o.get(k) if k in have else None
                        for k in ("user_mark", "cited", "user_note", "pillar", "score", "status", "user_silicon")}
@@ -435,9 +449,11 @@ def merge_store(store, other_db_path, peer=None, log=print):
         store.db.commit()
     finally:
         other.close()
-    log(f"Merge {Path(other_db_path).name}: {stats['new']} new (status 'external'), {stats['enriched']} enriched, "
+    log(f"Merge {Path(other_db_path).name}: {stats['new']} new (status '{'external_ro' if read_only else 'external'}'), "
+        f"{stats['enriched']} enriched, "
         f"{stats['unchanged']} unchanged" + (f", {stats['earlier']} first-seen dates moved earlier" if stats["earlier"] else "")
-        + (f", {stats['peer_rows']} curation rows kept for peer '{peer}'" if peer else ""))
+        + (f", {stats['peer_rows']} curation rows kept for peer '{peer}'" if peer else "")
+        + (f", {stats['promoted']} read-only papers now shared (the primary repo has them)" if stats["promoted"] else ""))
     return stats
 
 
@@ -445,12 +461,13 @@ def merge_store(store, other_db_path, peer=None, log=print):
 
 PEER_INSERT = ("INSERT OR REPLACE INTO peer_curation (peer_id, doi, pillar, score, user_mark, cited, user_note, status, "
                "user_silicon) VALUES (?,?,?,?,?,?,?,?,?)")
+PRESET_RX = re.compile(r"^[a-z][a-z0-9_]{0,31}$")  # a domain_preset name in an overlay (presets.PRESETS key)
 PEER_ID_RX = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,38}$")  # also a file name: peers/<id>.json, Peers/DASHBOARD_<id>.html
 OVERLAY_SQL = ("COALESCE(user_mark,'normal') != 'normal' OR cited = 1 OR COALESCE(user_note,'') != '' "
                "OR pillar IS NOT NULL OR score > 0")
 
 
-def peer_overlay(store, peer_id, pillars, pillar_of, share_notes=True, skip_arxiv=False):
+def peer_overlay(store, peer_id, pillars, pillar_of, share_notes=True, skip_arxiv=False, domain_preset=None):
     """This radar's curation as a JSON-ready overlay for collaborators (peers/<peer_id>.json in the shared
     repo): its pillar names, and per DOI with any curation (a mark, ⭐, a note, a chosen pillar or a score > 0)
     the pillar (`pillar_of(row)`, the same rule the dashboard uses), score, stage, ⭐, Si call, note and status.
@@ -475,7 +492,10 @@ def peer_overlay(store, peer_id, pillars, pillar_of, share_notes=True, skip_arxi
         if p.get("grp") == "beyond":
             r["beyond"] = 1
         rows[p["doi"]] = r
-    return {"format": 1, "peer_id": peer_id, "pillars": list(pillars), "custom_tags": [], "rows": rows}
+    out = {"format": 1, "peer_id": peer_id, "pillars": list(pillars), "custom_tags": [], "rows": rows}
+    if domain_preset:  # v3.0.3: the peer page shows that radar's evidence badges (🧬 Wet-Lab … for a bio_med radar)
+        out["domain_preset"] = domain_preset
+    return out
 
 
 def import_peer_overlay(store, overlay, peer_id):
@@ -494,6 +514,8 @@ def import_peer_overlay(store, overlay, peer_id):
     store.meta(f"peer_pillars:{peer_id}", {"pillars": [str(x) for x in overlay.get("pillars") or []],
                                            "custom_tags": overlay.get("custom_tags") or [],
                                            "updated": overlay.get("updated")})
+    dp = overlay.get("domain_preset")  # v3.0.3; "" = not given (an older radar): its page keeps this radar's badges
+    store.meta(f"peer_preset:{peer_id}", dp if isinstance(dp, str) and PRESET_RX.match(dp) else "")
     return len(rows)
 
 

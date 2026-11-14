@@ -438,7 +438,7 @@ def adopt_external(store, cfg):
     """--adopt-external: merged ('external') IEEE papers that score ≥ min_score here become this radar's archive
     papers, so the pillar replenish can pull them. Returns how many."""
     n = 0
-    for p in store.where("status='external' AND grp='ieee'"):
+    for p in store.where("status IN ('external','external_ro') AND grp='ieee'"):  # external_ro: from read_repos
         s, hits = fetcher.score(p, cfg)
         if s >= cfg["min_score"]:
             store.update(p["doi"], {"status": "archive", "score": s, "hits": hits})

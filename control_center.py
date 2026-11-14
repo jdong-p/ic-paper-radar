@@ -572,7 +572,8 @@ def store_status(cfg):
             return out
         by = dict(c.execute("SELECT COALESCE(status,'?'), COUNT(*) FROM papers GROUP BY status").fetchall())
         cols = {r[1] for r in c.execute("PRAGMA table_info(papers)")}
-        out.update(papers=sum(by.values()), by_status=by, candidates=by.get("candidate", 0), external=by.get("external", 0))
+        out.update(papers=sum(by.values()), by_status=by, candidates=by.get("candidate", 0),
+                   external=by.get("external", 0) + by.get("external_ro", 0))
         one = lambda sql: c.execute(sql).fetchone()[0]
         if "user_mark" in cols:
             out["selected"] = one("SELECT COUNT(*) FROM papers WHERE user_mark='selected'")

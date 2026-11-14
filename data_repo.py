@@ -245,14 +245,15 @@ def read_repo_dirs(cfg, log=print):
 
 def pull_read_repos(store, cfg, me, adopt=None, log=print):
     """Every data_repo.read_repos entry: its peers/*.json → peer_curation, its shared file merged into this store.
-    Read only. Returns {spec: {'papers', 'new', 'enriched', 'peers'}}."""
+    Read only. New DOIs come in as 'external_ro' (v3.0.3): searchable and on the peers' pages, adopted when they
+    score ≥ min_score here, but never exported into this radar's own data repo unless adopted. Returns {spec: {'papers', 'new', 'enriched', 'peers'}}."""
     out = {}
     for spec, d in read_repo_dirs(cfg, log):
         peers = import_peers(store, d, me, log) if (d / PEERS_DIR).exists() else {}
         st = {"new": 0, "enriched": 0}
         db = d / DB_NAME
         if db.exists():
-            st = store_mod.merge_store(store, db, log=lambda m: None)
+            st = store_mod.merge_store(store, db, log=lambda m: None, read_only=True)  # new DOIs: external_ro
         out[spec] = {"papers": _count(db), "new": st["new"], "enriched": st["enriched"], "peers": peers}
         log(f"  read repo {spec}: {out[spec]['papers']} papers ({st['new']} new, {st['enriched']} enriched)"
             + (", peers " + ", ".join(f"{p} ({n} rows)" for p, n in peers.items()) if peers else ""))
@@ -347,10 +348,11 @@ def write_overlay(store, cfg, repo, me, secrets=()):
     """This radar's overlay → peers/<me>.json. Rewritten only when its content changed ('updated' is the time of
     that change), and refused if any text holds a local path or a secret. Returns (changed, rows)."""
     import arxiv_source, catalog  # here: catalog imports modules that import this one
+    import presets
     dr = cfg.get("data_repo") or {}
     kwmap = catalog._kw_pillars(cfg)
     ov = store_mod.peer_overlay(store, me, [catalog.PILLARS[k] for k in sorted(catalog.PILLARS) if k],
-                                lambda p: catalog.pillar_of(p, kwmap), share_notes=dr.get("share_notes", True),
+                                lambda p: catalog.pillar_of(p, kwmap), share_notes=dr.get("share_notes", True), domain_preset=presets.key(cfg),
                                 skip_arxiv=arxiv_source.share_skip(cfg))
     text = json.dumps(ov, ensure_ascii=False, sort_keys=True)
     hit = store_mod.FORBIDDEN.search(text) or next((x for x in secrets if x and x in text), None)
