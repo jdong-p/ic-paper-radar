@@ -92,6 +92,20 @@ def key(cfg):
     return k if k in PRESETS else DEFAULT
 
 
+SHORT = {"ic_ece": "IC & ECE", "bio_med": "BioMed", "chem_mat": "Chemistry & Materials",
+         "general_eng": "General Engineering"}
+
+
+def active_name(cfg):
+    """The active preset's name (= key(cfg)); written into peers/<id>.json and the data repo's marker."""
+    return key(cfg)
+
+
+def short(k):
+    """'IC & ECE', 'BioMed', … for a preset name; '' for an unknown one."""
+    return SHORT.get(k) or (PRESETS[k]["label"] if k in PRESETS else "")
+
+
 def badge(cfg):
     return PRESETS[key(cfg)]["badge"]
 

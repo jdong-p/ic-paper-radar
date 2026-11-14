@@ -156,6 +156,7 @@ def fts_any(terms):
 
 class Store:
     def __init__(self, path, fts=True):
+        self.path = Path(path)  # v3.0.4: the domain-similarity check reads this file next to a read repo's
         self.db = sqlite3.connect(path)
         self.db.row_factory = sqlite3.Row
         self.db.executescript(SCHEMA)
@@ -467,7 +468,8 @@ OVERLAY_SQL = ("COALESCE(user_mark,'normal') != 'normal' OR cited = 1 OR COALESC
                "OR pillar IS NOT NULL OR score > 0")
 
 
-def peer_overlay(store, peer_id, pillars, pillar_of, share_notes=True, skip_arxiv=False, domain_preset=None):
+def peer_overlay(store, peer_id, pillars, pillar_of, share_notes=True, skip_arxiv=False, domain_preset=None,
+                 radar_title=None):
     """This radar's curation as a JSON-ready overlay for collaborators (peers/<peer_id>.json in the shared
     repo): its pillar names, and per DOI with any curation (a mark, ⭐, a note, a chosen pillar or a score > 0)
     the pillar (`pillar_of(row)`, the same rule the dashboard uses), score, stage, ⭐, Si call, note and status.
@@ -495,10 +497,12 @@ def peer_overlay(store, peer_id, pillars, pillar_of, share_notes=True, skip_arxi
     out = {"format": 1, "peer_id": peer_id, "pillars": list(pillars), "custom_tags": [], "rows": rows}
     if domain_preset:  # v3.0.3: the peer page shows that radar's evidence badges (🧬 Wet-Lab … for a bio_med radar)
         out["domain_preset"] = domain_preset
+    if radar_title:  # v3.0.4: its name in the 📚 Switch Radar / Repo menu
+        out["radar_title"] = radar_title
     return out
 
 
-def import_peer_overlay(store, overlay, peer_id):
+def import_peer_overlay(store, overlay, peer_id, source=""):
     """Replace peer_id's rows in peer_curation with the overlay's, and keep its pillar names (and custom tags)
     in meta['peer_pillars:<peer_id>']. Never touches this radar's own papers. Returns the number of rows."""
     if not PEER_ID_RX.match(peer_id or ""):
@@ -516,7 +520,17 @@ def import_peer_overlay(store, overlay, peer_id):
                                            "updated": overlay.get("updated")})
     dp = overlay.get("domain_preset")  # v3.0.3; "" = not given (an older radar): its page keeps this radar's badges
     store.meta(f"peer_preset:{peer_id}", dp if isinstance(dp, str) and PRESET_RX.match(dp) else "")
+    title = overlay.get("radar_title")  # v3.0.4: one line of plain text (escaped where it is shown)
+    store.meta(f"peer_title:{peer_id}", re.sub(r"[\x00-\x1f]", " ", title)[:80].strip() if isinstance(title, str) else "")
+    store.meta(f"peer_source:{peer_id}", str(source or ""))  # the data repo it came from (the dashboard menu groups by it)
     return len(rows)
+
+
+def drop_peer(store, peer_id):
+    """Remove a peer's curation rows (e.g. a read repo switched back to isolated mode): its page then comes from
+    that repo itself."""
+    store.db.execute("DELETE FROM peer_curation WHERE peer_id=?", (peer_id,))
+    store.db.commit()
 
 
 def peer_ids(store):

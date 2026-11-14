@@ -387,24 +387,49 @@ corpus (**🔄 Full Sync**). With **read** access they add your repo to their `"
 协作者把你的仓库加入自己的 `read_repos` 列表：
 
 ```json
-"data_repo": {"read_repos": ["your-name/my-paper-radar-data", "https://github.com/other/their-data.git"]}
+"data_repo": {"read_repos": ["your-name/my-paper-radar-data",
+                             {"repo": "otherlab/rf-radar-data", "merge_corpus": true}]}
 ```
 
-**📥 Read / Pull Shared Repos** then fetches your repo and every read repo, merges their papers and shows each
-peer's radar under 👥 Peers. It never pushes to them; the same happens at the end of every Full Sync.
+**📥 Read / Pull Shared Repos** then fetches your repo and every read repo. It never pushes to them; the same
+happens at the end of every Full Sync.
 
-**📥 Read / Pull Shared Repos** 只拉取、不推送：合并它们的论文，并在 👥 Peers 中显示每位同事的雷达。
+**📥 Read / Pull Shared Repos** 拉取你的仓库和所有订阅的仓库，从不向它们推送。
 
-**Reading a repo from another field is safe.** Subscribe to a friend's `bio_med` or `chem_mat` radar just to
-browse it: their papers come into your store as read-only (`external_ro`), searchable and shown on their
-👥 page, which uses **their** preset's badges (e.g. 🧬 Wet-Lab / In-Vivo vs 💻 In-Silico Only) while your own
-dashboard keeps yours. Only the papers that score ≥ `min_score` with your keywords are adopted into your radar
-and go into your own data repo when you sync; the rest are never re-uploaded there. (Papers of your primary
-data repo always round-trip in full.)
+### Subscribed repos: isolated by default, with a domain check
+*订阅的仓库：默认隔离，并自动检查领域*
 
-**读取其他领域的仓库是安全的。**订阅朋友的 `bio_med` 或 `chem_mat` 雷达仅供浏览：他们的论文以只读方式（`external_ro`）
-进入你的库，可以搜索，并显示在他们的 👥 页面上（使用**他们**预设的验证标记），你自己的面板保持不变。只有按你的关键词
-得分 ≥ `min_score` 的论文会被收入你的雷达，并在同步时进入你自己的数据仓库；其余论文永远不会被重新上传。
+**Every subscribed repo is an isolated dashboard by default.** Its papers and its peers' radars stay in that
+repo's own folder (`<data_repo_dir>_peers/…`): **0 rows** enter your `paper_store.sqlite`, and nothing of it is
+ever exported into your own private data repo. Each of its peers still gets a full read-only page,
+`output/Peers/DASHBOARD_<peer>.html`, built straight from that repo, with that radar's title and its own
+evidence badges (e.g. 🧬 Wet-Lab / In-Vivo vs 💻 In-Silico Only).
+
+**每个订阅的仓库默认都是一个隔离的面板**。它的论文和同事雷达只留在该仓库自己的文件夹中：**0 条**记录进入你的
+`paper_store.sqlite`，也不会被导出到你自己的私有数据仓库。它的每位同事仍有一个完整的只读页面，直接由该仓库生成，
+使用该雷达自己的标题和验证标记。
+
+**Domain Similarity Check.** On every 📥 Read, and in `STARTUP.html` under **🤝 Private Shared Repo & Peer
+Sync**, each subscribed repo is compared with your radar: its `domain_preset` (from the repo's marker file or
+its peers) and the share of its papers in venues you use.
+
+**领域相似度检查**：每次 📥 Read 时（以及在 `STARTUP.html` 中），每个订阅的仓库都会与你的雷达比较：领域预设，以及
+其论文中属于你所用期刊/会议的比例。
+
+- **🟢 Similar / same domain** (the same preset, or ≥ 15 % venue overlap, e.g. another lab's IC repo): stays
+  isolated unless you tick **Merge & Sync Corpus**. Then its papers are merged into your store and go into your
+  own data repo like your primary corpus (`{"repo": …, "merge_corpus": true}`).\
+  **🟢 相似领域**（预设相同或期刊重合 ≥ 15 %）：默认隔离；勾选 **Merge & Sync Corpus** 后才会并入你的论文库并同步。
+- **🟠 Different discipline** (another preset and < 15 % venue overlap, e.g. BioMed vs. IC): locked to isolated
+  mode. Ticking Merge asks you to confirm first (`"force_merge": true`).\
+  **🟠 不同学科**（预设不同且重合 < 15 %）：锁定为隔离模式；如仍要合并，页面会先请你确认。
+
+**📚 Switch Radar / Repo ▾** in the dashboard's header lists every dashboard by the private repo it comes
+from: your primary repo (📡 My Radar and its peers), repos merged into your corpus, and each isolated external
+repo, each with its field's icon. Every peer page has a **← Back to My Radar** button.
+
+面板顶部的 **📚 Switch Radar / Repo ▾** 按来源私有仓库列出所有面板（你的主仓库、已合并的仓库、各个隔离的外部仓库），
+每个同事页面都有 **← Back to My Radar** 按钮。
 
 ### Co-maintaining one corpus
 *共同维护一个论文库*
@@ -440,12 +465,12 @@ After both of you have run it, both stores hold the same union of papers.
 The shared `.sqlite` stays clean, but each sync also writes **your radar** next to it as
 `peers/<your id>.json`: your pillar names and, for every paper you curated, its pillar, score, ✅ / ⭐ / 🗄️,
 Si call, 🏷️ note and status. It reads your colleague's file and builds a read-only copy of their dashboard,
-**`output/Peers/DASHBOARD_<id>.html`**, linked from your dashboard's header as **👥 <id>'s Radar ↗** (or a
-👥 Peers ▾ menu). It's the same page (search, filters, row details, BibTeX download) with their pillars,
+**`output/Peers/DASHBOARD_<id>.html`**, listed in your dashboard's header under **📚 Switch Radar / Repo ▾**.
+It's the same page (search, filters, row details, BibTeX download) with their pillars,
 choices and domain preset (its evidence badges); nothing you click there changes your own radar.
 
 每次同步还会把你的雷达（方向名称、标记、⭐、评分、笔记）写成 `peers/<id>.json`，并为对方生成只读面板
-`output/Peers/DASHBOARD_<id>.html`，在你的面板顶部点击 👥 即可打开。
+`output/Peers/DASHBOARD_<id>.html`，在面板顶部的 📚 菜单中即可打开。
 
 In `config.json` → `"data_repo"`: `"peer_id"` is your name in `peers/` (empty = your Git `user.name`),
 `"share_curation": false` publishes nothing, `"share_notes": false` keeps your 🏷️ notes private. Everyone
@@ -462,7 +487,7 @@ with access to the shared repo can read what you publish.
   fields (abstract, authors, references, a missing digest, higher citation counts) are filled in; your marks,
   notes, pillars, scores and weekly state are never touched. New papers arrive as `external` (searchable,
   used for conference ↔ journal links, never pulled into your pillars) until they fit your pillars and are
-  adopted. Papers that came only from a `read_repos` entry and weren't adopted are left out of every copy you
+  adopted. Isolated subscribed repos never enter your store at all, so they can't end up in a copy you
   share.\
   合并他人的库：同一 DOI 只保留一条，只补空字段，从不改动你的标记；新论文标为 `external`，符合你的方向后才会收入。
 - **Safety check:** before a share copy replaces the old one, it is checked for leftover marks or "Pillar:"
@@ -792,7 +817,7 @@ python briefing.py --adopt-external                     # later: take the ones t
 | `python briefing.py --adopt-external` | Move external papers that fit your pillars into your archive |
 | `python briefing.py --sync-data-repo` | Sync with a shared corpus repo: fetch, merge, export, push if the remote gains (also on Fridays) |
 | `python briefing.py --init-data-repo OWNER/NAME` | Create (with `gh`) or clone your own private data repo, push the protocol files, set `remote_url` |
-| `python briefing.py --pull-data-repo` | Read only: fetch your data repo and every `read_repos` entry, import the peers' radars, merge their papers (no push) |
+| `python briefing.py --pull-data-repo` | Read only: fetch your data repo and every `read_repos` entry, run the domain check, merge only your data repo and repos with `merge_corpus` (no push) |
 | `python briefing.py --gui [PORT]` | Setup & Control Center in your browser (`Start_Radar_GUI.cmd` / `.command` do the same) |
 | `python briefing.py --lineage` | Conference ↔ journal links for every catalog paper |
 | `python briefing.py --finalize` | Finalize this week's report now |

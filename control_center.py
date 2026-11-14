@@ -117,6 +117,11 @@ def _lan_ip(h):
     return not ip.is_loopback and (ip.is_private or (ip.version == 4 and ip in cgnat))
 
 
+def _read_entries(cfg):
+    import data_repo
+    return data_repo.read_repo_entries(cfg)
+
+
 def editable(cfg):
     """The fields STARTUP.html edits, from the effective config (Starter: config.json over the template)."""
     import catalog
@@ -136,7 +141,11 @@ def editable(cfg):
            "data_repo": {"peer_id": dr.get("peer_id") or "", "share_curation": dr.get("share_curation", True) is not False,
                          "share_notes": dr.get("share_notes", True) is not False,
                          "adopt_external": dr.get("adopt_external", True) is not False,
-                         "remote_url": dr.get("remote_url") or "", "read_repos": list(dr.get("read_repos") or [])},
+                         "remote_url": dr.get("remote_url") or "",
+                         # v3.0.4: the repos as chips, and per repo its merge options (folded back by collect())
+                         "read_repos": [e["spec"] for e in _read_entries(cfg)],
+                         "read_opts": {e["spec"]: {"merge_corpus": e["merge"], "force_merge": e["force"]}
+                                       for e in _read_entries(cfg) if e["merge"] or e["force"]}},
            "data_repo_dir": (cfg.get("paths") or {}).get("data_repo_dir") or "",
            "domain_preset": presets.key(cfg), "deployment": deployment(cfg),
            "sync_hosts": list((cfg.get("sync_server") or {}).get("hosts") or [])}
@@ -278,10 +287,22 @@ def validate(upd, cfg):
                 elif kk == "read_repos":
                     def reads(vv=vv):
                         import data_repo
-                        lst = _texts(vv, "data_repo.read_repos", maxn=20, maxlen=400)
-                        for x in lst:
-                            data_repo.repo_url(x)
-                        return lst
+                        if not isinstance(vv, list) or len(vv) > 20:
+                            return _fail("data_repo.read_repos: expected a list of at most 20 repos")
+                        out = []
+                        for x in vv:  # "owner/name" (isolated) or {"repo", "merge_corpus", "force_merge"} (v3.0.4)
+                            obj = isinstance(x, dict)
+                            s = x.get("repo") if obj else x
+                            if not isinstance(s, str) or not s.strip() or len(s) > 400 or re.search(r"[\r\n\0]", s) \
+                                    or (obj and not set(x) <= {"repo", "merge_corpus", "force_merge"}):
+                                return _fail("data_repo.read_repos: each entry is owner/name, a URL or a folder, or "
+                                             '{"repo": …, "merge_corpus": true|false}')
+                            data_repo.repo_url(s.strip())
+                            m = obj and _bool(x.get("merge_corpus", False), "data_repo.read_repos.merge_corpus")
+                            f = obj and _bool(x.get("force_merge", False), "data_repo.read_repos.force_merge")
+                            out.append({"repo": s.strip(), "merge_corpus": True, **({"force_merge": True} if f else {})}
+                                       if m else s.strip())
+                        return out
                     put(["data_repo", kk], reads)
                 elif kk == "peer_id":
                     import store as store_mod
@@ -658,17 +679,21 @@ def data_repo_status(cfg):
     dcfg = cfg.get("data_repo") or {}
     out["remote_url"] = dcfg.get("remote_url") or (_origin_of(repo) if not why else "")
     out["read_repos"] = []
-    cache = Path(str(repo) + "_peers")
-    for spec in dcfg.get("read_repos") or []:
+    store_path = HERE / cfg["paths"]["store_file"]
+    for e in data_repo.read_repo_entries(cfg):  # v3.0.4: Domain Similarity Check and mode per repo (no network)
+        spec = e["spec"]
         try:
-            src = data_repo.repo_url(spec)
-            d = Path(src) if Path(src).exists() and (Path(src) / data_repo.DB_NAME).exists() and \
-                not data_repo.REPO_URL_RX.match(str(spec).strip()) else \
-                cache / (data_repo._slug(data_repo._norm_url(src).replace("/", "_")) or "repo")
-            out["read_repos"].append({"spec": spec, "dir": str(d), "ready": (d / data_repo.DB_NAME).exists(),
-                                      "papers": data_repo._count(d / data_repo.DB_NAME)})
-        except Exception as e:
-            out["read_repos"].append({"spec": spec, "dir": "", "ready": False, "papers": 0, "error": str(e)})
+            d = data_repo.read_repo_dir(cfg, spec)
+            ready = (d / data_repo.DB_NAME).exists()
+            sim = data_repo.similarity(cfg, d, store_path) if ready else None
+            out["read_repos"].append({"spec": spec, "label": data_repo.repo_label(spec), "dir": str(d), "ready": ready,
+                                      "papers": data_repo._count(d / data_repo.DB_NAME), "merge": e["merge"],
+                                      "force": e["force"], "sim": sim,
+                                      "mode": data_repo.repo_mode(e, sim) if ready else "isolated"})
+        except Exception as err:
+            out["read_repos"].append({"spec": spec, "label": spec, "dir": "", "ready": False, "papers": 0,
+                                      "error": str(err), "merge": e["merge"], "force": e["force"], "sim": None,
+                                      "mode": "isolated"})
     return out
 
 
@@ -1063,7 +1088,7 @@ def render(data):
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=5">
 <title>{NAME} — Setup &amp; Control Center</title><style>{html_renderer.CSS}{CSS}</style></head>
-<body><header class="bar"><h1>⚙️ Setup &amp; Control Center <span class="muted small">v3.0.2</span></h1>
+<body><header class="bar"><h1>⚙️ Setup &amp; Control Center <span class="muted small">v3.0.4</span></h1>
 <a class="btn" href="DASHBOARD.html">📊 Open Dashboard ↗</a>
 <span id="mode" class="btn pill" title="">⏳ Connecting…</span>
 <span id="dirty" class="dirty" hidden>● unsaved changes</span>
@@ -1205,7 +1230,7 @@ function kwPairs() {
 function collect() {
   const u = {positive_keywords: kwPairs(), negative_keywords: S.negative_keywords, negative_override: S.negative_override,
              key1_themes: S.key1_themes, min_score: S.min_score, vip_authors: S.vip_authors, vip_boost: S.vip_boost,
-             anchors: S.anchors, contact_email: S.contact_email, data_repo: S.data_repo, data_repo_dir: S.data_repo_dir,
+             anchors: S.anchors, contact_email: S.contact_email, data_repo: dataRepoOut(), data_repo_dir: S.data_repo_dir,
              domain_preset: S.domain_preset, deployment: S.deployment, sync_hosts: S.sync_hosts};
   if (STARTER) {
     u.pillars = KW.pillars.map(p => p.name.trim());
@@ -1519,6 +1544,39 @@ function renderRepoStats() {
     : 'You share no curation: only the clean corpus (papers, abstracts, digests) goes to the repo.';
 }
 function linesList(arr) { return h('textarea', {class: 'in', oninput: e => { arr.splice(0, arr.length, ...e.target.value.split('\n').map(x => x.trim()).filter(Boolean)); changed(); }}, arr.join('\n')); }
+// v3.0.4: read_repos chips are plain specs; S.data_repo.read_opts[spec] = {merge_corpus, force_merge}
+function dataRepoOut() {
+  const d = Object.assign({}, S.data_repo), o = d.read_opts || {};
+  delete d.read_opts;
+  d.read_repos = (d.read_repos || []).map(s => {
+    const x = o[s] || {};
+    return x.merge_corpus ? Object.assign({repo: s, merge_corpus: true}, x.force_merge ? {force_merge: true} : {}) : s;
+  });
+  return d;
+}
+function simNote(x) {
+  if (!x.sim) return h('div', {class: 'muted small'}, x.ready ? '' : '⏳ domain check after the next 📥 Read');
+  const pct = v => Math.round((v || 0) * 100) + ' %';
+  const ov = h('div', {class: 'muted small'}, `${x.sim.theirs_label || 'field not stated'} · venue overlap ${pct(x.sim.venue_overlap)} · DOI overlap ${pct(x.sim.doi_overlap)}`);
+  return x.sim.kind === 'similar'
+    ? h('div', {}, h('div', {class: 'small ok'}, `🟢 Similar domain detected (${x.sim.theirs_label || x.sim.mine_label}). You can keep this repo separated as a standalone dashboard, or optionally enable “Merge & Sync Corpus” to absorb its papers.`), ov)
+    : h('div', {}, h('div', {class: 'small warn'}, `🟠 Different discipline detected (${x.sim.theirs_label || 'another field'} vs. ${x.sim.mine_label}). Locked to Isolated Dashboard Mode by default so its papers never mix into or pollute your SQLite store or your primary GitHub private repo!`), ov);
+}
+function mergeToggle(x) {
+  const o = (S.data_repo.read_opts = S.data_repo.read_opts || {});
+  const cur = o[x.spec] || {};
+  const box = h('input', {type: 'checkbox', disabled: !x.sim, onchange: e => {
+    if (e.target.checked && x.sim && x.sim.kind !== 'similar' && !confirm(`🟠 ${x.label} is a different discipline (${x.sim.theirs_label || 'another field'} vs. ${x.sim.mine_label}). Merging puts its ${fmt(x.papers)} papers into your store, and Full Sync then uploads them into your primary private repo. Merge anyway?`)) {
+      e.target.checked = false; return;
+    }
+    o[x.spec] = e.target.checked ? Object.assign({merge_corpus: true}, x.sim && x.sim.kind !== 'similar' ? {force_merge: true} : {}) : {};
+    if (!e.target.checked) delete o[x.spec];
+    changed(); toast(e.target.checked ? 'Merge on: 💾 Save, then 📥 Read merges it' : 'Isolated: 💾 Save, then 📥 Read');
+  }});
+  box.checked = !!cur.merge_corpus;
+  const mode = x.mode === 'merged' ? h('span', {class: 'tag'}, '🔀 Merged into my corpus') : h('span', {class: 'tag'}, '🔒 Isolated dashboard');
+  return h('div', {}, mode, h('label', {class: 'small', title: x.sim ? '' : 'after the next 📥 Read'}, box, ' Merge & Sync Corpus'));
+}
 function renderRepo() {
   const dr = ST.data_repo;
   const head = dr.connected
@@ -1560,11 +1618,12 @@ function renderRepo() {
   const ax = STARTER ? S.arxiv : null;
   const rr = (dr.read_repos || []);
   const reads = h('div', {}, h('h3', {}, '📚 Shared repos to read (data_repo.read_repos)'),
-    h('p', {class: 'small muted'}, 'Private data repos your collaborators shared with you (read access is enough): pulled into <data_repo_dir>_peers/, merged into your store, never pushed. owner/name, a clone URL or a local folder.'),
+    h('p', {class: 'small muted'}, 'Private data repos your collaborators shared with you (read access is enough): pulled into <data_repo_dir>_peers/ and never pushed. Each one is an isolated dashboard by default (📚 Switch Radar / Repo in the dashboard header; 0 papers enter your store); merge a similar-domain repo into your corpus with “Merge & Sync Corpus”. owner/name, a clone URL or a local folder.'),
     chips(dro.read_repos, {placeholder: 'colleague/their-paper-radar-data', size: 34,
       check: v => (/^[A-Za-z0-9][\w.-]*\/[\w.-]+$/.test(v) || /^(https:\/\/[A-Za-z0-9.-]+\/|git@[A-Za-z0-9.-]+:)[\w.-]+\/[\w.-]+$/.test(v) || /[\\/]/.test(v)) ? null : 'owner/name, https://…, git@… or a folder'}),
-    rr.length ? h('table', {class: 'mini'}, h('tbody', {}, rr.map(x => h('tr', {}, h('td', {class: 'small'}, h('code', {}, x.spec)),
-      h('td', {class: 'small'}, x.error ? h('span', {class: 'warn'}, x.error) : (x.ready ? `🟢 ${fmt(x.papers)} papers` : '⏳ pulled on the next 📥 Read')))))) : null);
+    rr.length ? h('table', {class: 'mini'}, h('tbody', {}, rr.map(x => h('tr', {}, h('td', {class: 'small'}, h('code', {}, x.spec),
+      h('div', {class: 'muted small'}, x.error ? h('span', {class: 'warn'}, x.error) : (x.ready ? `${fmt(x.papers)} papers` : '⏳ pulled on the next 📥 Read'))),
+      h('td', {}, simNote(x)), h('td', {}, mergeToggle(x)))))) : null);
   fill($('#c-repo'), h('h2', {}, '🤝 Private Shared Repo & Peer Sync'), head,
     h('h3', {}, 'Peers'), peers,
     h('h3', {}, 'My sharing'), h('p', {id: 'sharestats', class: 'small'}),

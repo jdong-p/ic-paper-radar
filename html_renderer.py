@@ -125,7 +125,8 @@ CSS = """
 header.bar{position:sticky;top:0;z-index:20;background:var(--bg);border-bottom:1px solid var(--line);padding:10px 16px;
 display:flex;flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none;white-space:nowrap;
 gap:8px;align-items:center}header.bar::-webkit-scrollbar{display:none}header.bar>*{flex:none}
-header.bar .peers>.menu{position:fixed;top:auto;left:auto}.btn.setup-hl{background:var(--accent);color:#fff;border-color:var(--accent);
+header.bar .peers>.menu{position:fixed;top:auto;left:auto}
+.menu .mhead{font-size:11.5px;font-weight:700;color:var(--muted);padding:6px 4px 0;white-space:normal}.menu .btn.on{border-color:var(--accent)}.btn.setup-hl{background:var(--accent);color:#fff;border-color:var(--accent);
 font-weight:700;box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 35%,transparent)}
 .emptycta{text-align:center;padding:28px 12px}.emptycta .btn{display:inline-block;margin-top:10px;font-size:15px;padding:9px 16px;text-decoration:none;white-space:normal}
 header.bar a.btn{text-decoration:none}
@@ -470,9 +471,9 @@ refreshBars(); pill(); probe(); setInterval(() => {{ if (!LIVE) probe(); }}, 600
 </body></html>"""
 
 
-def _bar(title, home=None, extra="", readonly=False):
+def _bar(title, home=None, extra="", readonly=False, home_label="← Dashboard"):
     return (f'<h1>{html.escape(title)}</h1>'
-            + (f'<a class="btn" href="{home}">← Dashboard</a>' if home else "") + extra
+            + (f'<a class="btn" href="{home}">{html.escape(home_label)}</a>' if home else "") + extra
             + '<button id="syncpill" class="btn pill" onclick="pillClick()">⏳ Connecting…</button>'
             # on a phone the secondary buttons fold behind ⋯ (CSS .sec / .msec)
             + '<button class="btn msec" onclick="this.parentElement.classList.toggle(\'showsec\')" title="More">⋯</button>'
@@ -975,7 +976,7 @@ Open <code>README.md</code> to configure your research domains with AI"""
                                 "run or <code>briefing.py --sync</code>.")
     setup = (SETUP_BTN.replace('class="btn"', 'class="btn setup-hl"')  # empty or [SETUP REQUIRED]: the way in
              if not recs or data["welcome"] else SETUP_BTN)
-    Path(path).write_text(_page("Engineer Paper Radar — Dashboard", "", _bar("📡 Engineer Paper Radar", extra=setup + _peer_links(peers) + TAGS_BTN),
+    Path(path).write_text(_page("Engineer Paper Radar — Dashboard", "", _bar("📡 Engineer Paper Radar", extra=setup + _switcher(peers) + TAGS_BTN),
                                 body, data, DASH_JS), encoding="utf-8")
     return len(recs)
 
@@ -1034,35 +1035,116 @@ def write_report_html(md_path, store, home, sync):
     return out
 
 
-def _peer_links(peers):
-    """The main dashboard's header link to the peer pages: one button, or a 👥 Peers ▾ menu for several."""
-    if not peers:
+def _switcher(pages, here=None, in_peers=False, primary=""):
+    """v3.0.4: the header's 📚 Switch Radar / Repo ▾ menu: every dashboard, grouped by the private repo it comes
+    from (My Primary Repo: 📡 My Radar + that repo's peers · repos merged into my corpus · external isolated
+    repos), each with its field's icon. `here`: the page being written (marked); in_peers: a Peers/ page."""
+    if not pages:
         return ""
-    a = lambda peer, href, n, label: (f'<a class="btn" href="{href}" title="{html.escape(peer)}\'s radar: {n} papers, '
-                                      f'read-only">{label}</a>')
-    if len(peers) == 1:
-        return a(*peers[0], f"👥 {html.escape(peers[0][0])}'s Radar ↗")
-    return ('<details class="peers"><summary class="btn">👥 Peers ▾</summary><div class="menu">'
-            + "".join(a(p, h, n, f"👥 {html.escape(p)} ({n})") for p, h, n in peers) + "</div></details>")
+    main = "../DASHBOARD.html" if in_peers else "DASHBOARD.html"
+    link = lambda f, label, tip, on: (f'<a class="btn{" on" if on else ""}" href="{f}" title="{html.escape(tip)}">'
+                                      f'{label}</a>')
+    groups = {}
+    for p in pages:
+        groups.setdefault((p["group"], p["repo"]), []).append(p)
+    prim = next((r for g, r in groups if g == "primary"), pages[0].get("primary") or "")
+    out = [f'<div class="mhead">My Primary Repo{f" ({html.escape(prim)})" if prim else ""}</div>',
+           link(main, "📡 My Radar", "your own dashboard", here is None)]
+    rank = {"primary": 0, "merged": 1, "isolated": 2}
+    for g, repo in sorted(groups, key=lambda k: (rank[k[0]], k[1].lower())):
+        if g == "merged":
+            out.append(f'<div class="mhead">{html.escape(repo)} · merged into my corpus</div>')
+        elif g == "isolated":
+            out.append(f'<div class="mhead">External repo: {html.escape(repo)}</div>')
+        for p in groups[(g, repo)]:
+            icon = presets.PRESETS[p["preset"]]["icon"] if p["preset"] in presets.PRESETS else "👥"
+            fld = presets.short(p["preset"]) or "field unknown"
+            tail = (f"{html.escape(repo)} · Isolated · {'Similar' if p['kind'] == 'similar' else 'Different'}"
+                    if g == "isolated" else html.escape(fld))
+            out.append(link(p["file"] if in_peers else f"Peers/{p['file']}",
+                            f"{icon} {html.escape(p['title'])} ({tail})",
+                            f"{p['title']}: {len(p['recs'])} papers, read-only", here == p["file"]))
+    return ('<details class="peers"><summary class="btn">📚 Switch Radar / Repo ▾</summary><div class="menu">'
+            + "".join(out) + "</div></details>")
+
+
+def _peer_page_data(store, cfg, peer, fallback_preset=""):
+    """(recs, pcfg, preset, pillar info, title) of one peer of `store` (this store, or an isolated repo's view)."""
+    pk = store.meta(f"peer_preset:{peer}") or fallback_preset or ""
+    pcfg = {**cfg, "domain_preset": pk} if pk in presets.PRESETS else cfg
+    return (peer_records(store, pcfg, peer), pcfg, pk if pk in presets.PRESETS else "",
+            store.meta(f"peer_pillars:{peer}") or {}, store.meta(f"peer_title:{peer}") or f"{peer}'s Radar")
+
+
+def collect_peer_pages(store, cfg, log=print):
+    """Every peer dashboard to write, as dicts (peer, recs, pcfg, preset, info, title, repo, group, kind):
+    - the peers in this store's peer_curation: the primary data repo's overlays, read repos merged with
+      merge_corpus (meta peer_source), --merge-store --peer;
+    - v3.0.4, isolated read repos: built from a throwaway copy of that repo's own shared file and peers/*.json
+      (with the repo's domain_preset for peers that don't name one), so this store gains 0 rows."""
+    import shutil
+    import tempfile
+    import data_repo
+    primary = data_repo.primary_label(cfg)
+    # a peer whose overlay names no preset: its repo's (MARKER), else, in the primary repo, this radar's own
+    fields = {primary: data_repo.repo_meta(data_repo.repo_dir(cfg))["domain_preset"] or presets.active_name(cfg)}
+    for e in data_repo.read_repo_entries(cfg):
+        try:
+            fields.setdefault(data_repo.repo_label(e["spec"]),
+                              data_repo.repo_meta(data_repo.read_repo_dir(cfg, e["spec"]))["domain_preset"])
+        except Exception:
+            pass
+    pages = []
+    for peer in store_mod.peer_ids(store):
+        src = store.meta(f"peer_source:{peer}") or ""
+        g = "merged" if src and src != primary else "primary"
+        recs, pcfg, pk, info, title = _peer_page_data(store, cfg, peer, fields.get(src if g == "merged" else primary, ""))
+        if not recs:
+            continue
+        pages.append({"peer": peer, "recs": recs, "pcfg": pcfg, "preset": pk, "info": info, "title": title,
+                      "repo": src if g == "merged" else primary, "group": g, "kind": "", "primary": primary})
+    me = data_repo.peer_id(cfg, None)
+    for e, rd, sim in data_repo.isolated_repos(cfg, getattr(store, "path", None), log):
+        label = data_repo.repo_label(e["spec"])
+        try:
+            with tempfile.TemporaryDirectory() as td:
+                view = Path(td) / "view.sqlite"
+                shutil.copy2(rd / data_repo.DB_NAME, view)
+                vs = store_mod.Store(view, fts=False)
+                try:
+                    if (rd / data_repo.PEERS_DIR).exists():
+                        data_repo.import_peers(vs, rd, me, lambda m: None, source=label)
+                    for peer in store_mod.peer_ids(vs):
+                        recs, pcfg, pk, info, title = _peer_page_data(vs, cfg, peer, sim["theirs"])
+                        if recs:
+                            pages.append({"peer": peer, "recs": recs, "pcfg": pcfg, "preset": pk, "info": info,
+                                          "title": title, "repo": label, "group": "isolated", "kind": sim["kind"],
+                                          "primary": primary})
+                finally:
+                    vs.db.close()
+        except Exception as err:
+            log(f"Peer pages of {label} not written: {err}")
+    return pages
 
 
 def write_peer_dashboards(store, cfg, log=print):
-    """Peers/DASHBOARD_<peer>.html for every peer with rows in peer_curation (--sync-data-repo overlays or
-    --merge-store --peer): the same dashboard, read-only, with the peer's pillars and curation. Pages of peers
-    that are gone are removed. Returns [(peer, href, papers)] for the main dashboard's header link."""
+    """Peers/DASHBOARD_<peer>.html for every peer page (collect_peer_pages): the same dashboard, read-only, with
+    that radar's pillars, curation, title and domain preset (badges, verdict words), and the 📚 Switch Radar /
+    Repo menu. Two peers with one id in different repos get DASHBOARD_<peer>--<repo>.html. Pages of peers that
+    are gone are removed. Returns the page dicts (with 'file') for the main dashboard's menu."""
     d = Path(cfg["paths"]["onedrive_root"]) / "Peers"
-    out = []
-    for peer in store_mod.peer_ids(store):
-        pk = store.meta(f"peer_preset:{peer}") or ""
-        recs = peer_records(store, {**cfg, "domain_preset": pk} if pk in presets.PRESETS else cfg, peer)
-        if not recs:
-            continue
-        info = store.meta(f"peer_pillars:{peer}") or {}
-        # v3.0.3: the peer's own domain preset (from its overlay): its badges and Si verdict words on its page
-        pk = store.meta(f"peer_preset:{peer}") or ""
-        pcfg = {**cfg, "domain_preset": pk} if pk in presets.PRESETS else cfg
+    pages = collect_peer_pages(store, cfg, log)
+    used = set()
+    for p in pages:
+        f = f"DASHBOARD_{p['peer']}.html"
+        if f in used:
+            f = f"DASHBOARD_{p['peer']}--{re.sub(r'[^A-Za-z0-9_.-]+', '-', p['repo'])[:40]}.html"
+        used.add(f)
+        p["file"] = f
+    gen = datetime.now().strftime("%Y-%m-%d %H:%M")
+    for p in pages:
+        peer, recs, pcfg, pk, info, title = p["peer"], p["recs"], p["pcfg"], p["preset"], p["info"], p["title"]
         names = info.get("pillars") or [f"Pillar {k}" for k in range(1, max(r["pillar"] for r in recs) + 1)]
-        gen = datetime.now().strftime("%Y-%m-%d %H:%M")
         data = {"generated": gen, "papers": recs, "topics": [], "weeks": [], "readonly": True, "peer": peer,
                 "marks": {r["doi"]: r["mark"] for r in recs}, "bib": {r["doi"]: r["bib"] for r in recs},
                 "notes": {r["doi"]: r["note"] for r in recs if r["note"]},
@@ -1070,24 +1152,27 @@ def write_peer_dashboards(store, cfg, log=print):
                             for i, name in enumerate(names, 1)],
                 "sync": {"hosts": [], "port": 0, "token": "", "timeout": 0},  # no token: this page can't write
                 "badge": presets.badge(pcfg)}
-        field = (f" · {presets.PRESETS[pk]['icon']} {html.escape(presets.PRESETS[pk]['label'])}"
+        icon = presets.PRESETS[pk]["icon"] if pk in presets.PRESETS else "👤"
+        field = (f" · {icon} {html.escape(presets.PRESETS[pk]['label'])}"
                  if pk in presets.PRESETS and presets.key(pcfg) != presets.key(cfg) else "")
+        where = {"isolated": f" · from <b>{html.escape(p['repo'])}</b> (🔒 isolated: none of these papers are in your store)",
+                 "merged": f" · from <b>{html.escape(p['repo'])}</b> (merged into your corpus)"}.get(p["group"], "")
         upd = f" · updated {html.escape(str(info['updated'])[:16].replace('T', ' '))}" if info.get("updated") else ""
-        body = (f'<div class="peerbanner">👤 Viewing <b>{html.escape(peer)}</b>\'s Radar (Read-Only){field}{upd} · '
-                f'<a href="../DASHBOARD.html">← Back to My Dashboard</a></div>'
-                + _dash_body(gen, '<a href="../DASHBOARD.html">My Dashboard</a>',
+        body = (f'<div class="peerbanner">{icon} Viewing <b>{html.escape(title)}</b> (Read-Only){field}{where}{upd} · '
+                f'<a href="../DASHBOARD.html">← Back to My Radar</a></div>'
+                + _dash_body(gen, '<a href="../DASHBOARD.html">My Radar</a>',
                              f"{html.escape(peer)}'s pillars, scores, ✅ / ⭐ / 🗄️ choices and 🏷️ notes, from the "
-                             "shared corpus repo (<code>--sync-data-repo</code>). Read-only: clicks here change nothing."))
+                             f"data repo {html.escape(p['repo'])}. Read-only: clicks here change nothing."))
         d.mkdir(parents=True, exist_ok=True)
-        (d / f"DASHBOARD_{peer}.html").write_text(
-            _page(f"Engineer Paper Radar — {peer}'s Radar", "", _bar(f"👤 {peer}'s Radar", "../DASHBOARD.html", TAGS_BTN, readonly=True),
+        (d / p["file"]).write_text(
+            _page(f"Engineer Paper Radar — {title}", "", _bar(f"{icon} {title}", "../DASHBOARD.html",
+                                                _switcher(pages, p["file"], True) + TAGS_BTN, readonly=True,
+                                                home_label="← Back to My Radar"),
                   body, data, DASH_JS), encoding="utf-8")
-        out.append((peer, f"Peers/DASHBOARD_{peer}.html", len(recs)))
-    keep = {f"DASHBOARD_{p}.html" for p, _, _ in out}
     for f in d.glob("DASHBOARD_*.html") if d.exists() else []:
-        if f.name not in keep:
+        if f.name not in used:
             f.unlink()
-    return out
+    return pages
 
 
 def write_all(store, cfg, log=print):
@@ -1112,7 +1197,7 @@ def _write_pages(store, cfg, log=print):
             pages += 1
     write_phone_link(cfg)
     log(f"HTML: DASHBOARD.html ({n} papers) + {pages} report pages"
-        + "".join(f" + Peers/DASHBOARD_{p}.html ({k})" for p, _, k in peers))
+        + "".join(f" + Peers/{p['file']} ({len(p['recs'])})" for p in peers))
 
 
 def write_phone_link(cfg):

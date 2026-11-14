@@ -169,7 +169,7 @@
                                 "_note": "Optional shared corpus repo for collaborators (data_repo.py): python briefing.py --sync-data-repo, and after every Friday finalize when a clone exists. adopt_external: merged papers scoring >= min_score join your archive.",
                                 "remote_url": "",
                                 "read_repos": [],
-                                "_v3_note": "v3.0, your own private data repo: python briefing.py --init-data-repo <owner/name> (or STARTUP.html) creates or clones it, pushes the protocol files and sets remote_url (a new computer then clones it automatically). read_repos: data repos collaborators shared with you for reading (owner/name, URL or folder); --pull-data-repo merges them and never pushes."},
+                                "_v3_note": "v3.0.4: a read_repos entry is an isolated dashboard by default (0 rows in your store, never re-exported); {\"repo\": \"owner/name\", \"merge_corpus\": true} merges a similar-domain repo (STARTUP.html runs the domain check). v3.0, your own private data repo: python briefing.py --init-data-repo <owner/name> (or STARTUP.html) creates or clones it, pushes the protocol files and sets remote_url (a new computer then clones it automatically). read_repos: data repos collaborators shared with you for reading (owner/name, URL or folder); --pull-data-repo merges them and never pushes."},
 
     "paths": {
         "_note": "portable_mode: every output goes to ./output (paths.py). marks_extra_dirs: where the dashboard's '💾 Save Marks' downloads land. data_repo_dir: your clone of the shared corpus repo; empty = the sibling folder ../ic-paper-radar-data (~ allowed).",
