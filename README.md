@@ -133,6 +133,10 @@ right-click → Open), or run `python briefing.py --gui`. A small server starts 
   `--seed-pillars 5 --no-claude`), **🌐 Fetch New Papers Now** (a collection pass), **📥 Read from Private
   Repo** (pull only) and **🔄 Full Sync** (`--sync` + `--sync-data-repo`, pushes). The output streams into
   the page.
+- **One run at a time:** every run takes the lock file `.run.lock` (`run_lock.py`). A button pressed while
+  another run is going (a scheduled task, a terminal, a second window or a double click) starts nothing:
+  the page shows that run's output (`.run.log`) instead. A run started from a terminal waits for the
+  other one (up to 30 min). 同一时间只运行一个任务；其他任务运行时按钮不会重复启动，而是显示正在运行的输出。
 - **💾 Save config.json** writes only the settings you changed; everything else in the file stays as it is
   (the previous file is kept in `output/_system/config.backup.json`).
 
@@ -557,6 +561,7 @@ switches to `--no-claude` by itself and everything else still works. Add `--no-c
 | `config.example.json` | The starter template and the defaults for any key your `config.json` lacks / 模板与默认值 |
 | `config_file.py` | Creates `config.json` from the template, merges it over the defaults |
 | `briefing.py` | The command you run / 运行入口 |
+| `run_lock.py` | One run at a time: `.run.lock` and `.run.log` (not in Git) / 运行锁 |
 | `Start_Radar_GUI.cmd`, `Start_Radar_GUI.command`, `control_center.py` | The Setup & Control Center (`output/STARTUP.html`, `--gui`) / 控制中心 |
 | `fetcher.py`, `topic.py`, `relations.py`, `pins.py` | Collection, scoring, deep-dives, lineage, pinning |
 | `catalog.py`, `html_renderer.py`, `curation.py` | Master table, BibTeX, dashboard, ✅/⭐/🗄️ marks |

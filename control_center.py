@@ -20,6 +20,10 @@ API (JSON):
                              "config"?: {...}, "clone_url"?, "clone_dir"?}: saves the config, then runs briefing.py
                             in a background worker (one job at a time)
   GET  /api/job?since=N   → {"id", "running", "action", "rc", "lines": [...], "next"}: the job's output from line N
+  GET  /api/active?since=B → {"active", "id", "what", "lines", "next"}: a run this server didn't start (07:00 task,
+                            Friday sync, a terminal) from .run.log byte B (run_lock.py)
+POST /api/run never overlaps a run: while one holds .run.lock (run_lock.py) it answers 409 {"error": "already_running",
+"already_running": true, "job" | "active": …}, and the page streams that run instead.
 
 Secrets never leave the machine: the status holds only booleans (has_ieee_key, has_claude), never a key's value.
 The --gui server listens on 127.0.0.1 only and checks the Host header (no DNS rebinding). It needs a key made at
@@ -657,6 +661,7 @@ class Jobs:
     def __init__(self):
         self.lock = threading.Lock()
         self.n = 0
+        self.child = None  # pid of the briefing.py this worker is running now
         self.st = {"id": 0, "action": None, "running": False, "rc": None, "lines": [], "base": 0,
                    "started": None, "finished": None}
 
@@ -692,9 +697,13 @@ class Jobs:
         env = dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUNBUFFERED="1", GIT_TERMINAL_PROMPT="0")
         p = subprocess.Popen(cmd, cwd=HERE, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                              text=True, encoding="utf-8", errors="replace", env=env, creationflags=NO_WINDOW)
-        for line in p.stdout:
-            self.log(line)
-        return p.wait()
+        self.child = p.pid
+        try:
+            for line in p.stdout:
+                self.log(line)
+            return p.wait()
+        finally:
+            self.child = None
 
     def _clone(self, opts):
         import data_repo
@@ -758,17 +767,40 @@ def _save(req):
     return cfg, changed
 
 
+def external_run(jobs):
+    """The run holding .run.lock when it isn't this server's own job: {id, what, pid, args, started}, else None."""
+    import run_lock
+    if jobs.view()["running"]:
+        return None
+    h = run_lock.holder()
+    if not h or (jobs.child and h.get("pid") == jobs.child):
+        return None
+    return {"id": f"{h.get('pid')}-{h.get('started')}", "what": run_lock.describe(h), "pid": h.get("pid"),
+            "args": h.get("args") or [], "started": h.get("started")}
+
+
 def api_get(path, query, jobs):
     """(http code, JSON object) for GET /api/config and /api/job."""
     if path == "/api/config":
         cfg = load_cfg()
-        return 200, {"ok": True, "editable": editable(cfg), "status": status(cfg), "job": jobs.view(10 ** 9)}
+        return 200, {"ok": True, "editable": editable(cfg), "status": status(cfg), "job": jobs.view(10 ** 9),
+                     "active": external_run(jobs)}
     if path == "/api/job":
         try:
             since = int((query.get("since") or ["0"])[0])
         except ValueError:
             since = 0
         return 200, {"ok": True} | jobs.view(since)
+    if path == "/api/active":
+        import run_lock
+        try:
+            since = int((query.get("since") or ["0"])[0])
+        except ValueError:
+            since = 0
+        ext = external_run(jobs)
+        lines, nxt = run_lock.read_log(since, finished=not ext)
+        return 200, {"ok": True, "active": bool(ext), "id": ext and ext["id"], "what": ext["what"] if ext else "",
+                     "lines": lines, "next": nxt}
     return 404, {"ok": False, "error": "not found"}
 
 
@@ -784,8 +816,11 @@ def api_post(path, req, jobs):
             action = req.get("action")
             if action not in ACTIONS:
                 return 400, {"ok": False, "error": f"unknown action {action!r}"}
-            if jobs.view()["running"]:
-                return 409, {"ok": False, "error": "another action is still running"}
+            if jobs.view()["running"]:  # a double click, or a second tab
+                return 409, {"ok": False, "error": "already_running", "already_running": True, "job": jobs.view()}
+            ext = external_run(jobs)
+            if ext:  # the 07:00 run, the Friday sync, a terminal or another Control Center window
+                return 409, {"ok": False, "error": "already_running", "already_running": True, "active": ext}
             if action == "pull_data_repo" and req.get("clone_url"):
                 import data_repo
                 url = str(req["clone_url"]).strip()
@@ -891,7 +926,7 @@ const STARTER = D.edition === 'starter';
 const clone = x => JSON.parse(JSON.stringify(x));
 const $ = (s, el) => (el || document).querySelector(s);
 const fmt = n => (n == null ? '–' : Number(n).toLocaleString('en-US'));
-let S = clone(D.editable), ST = D.status, API = null, KW = null, BASE = '', JOB = {id: null, next: 0, running: false};
+let S = clone(D.editable), ST = D.status, API = null, KW = null, BASE = '', JOB = {id: null, next: 0, running: false}, ACT = null;
 
 function h(tag, attrs, ...kids) {
   const e = document.createElement(tag);
@@ -1054,7 +1089,30 @@ function renderRun() {
     h('div', {class: 'runbar'}, runBtn('rescore_and_seed', null, true), runBtn('daily'), runBtn('pull_data_repo'), runBtn('sync_data_repo')));
   lockRun();
 }
-function lockRun() { document.querySelectorAll('[data-run]').forEach(b => { b.disabled = !!(API && JOB.running); }); }
+function lockRun() { document.querySelectorAll('[data-run]').forEach(b => { b.disabled = !!(API && (JOB.running || ACT)); }); }
+// a run this page didn't start (scheduled task, terminal, another window): stream .run.log until it ends
+function streamActive(a) {
+  ACT = {id: a.id, next: 0};
+  showConsole(`⏳ Already running: ${a.what}`, ['Another radar run holds the lock, so nothing new was started. Its output:']);
+  lockRun(); pollActive();
+}
+async function pollActive() {
+  if (!ACT) return;
+  let r;
+  try { r = await call('GET', '/api/active?since=' + ACT.next); } catch (e) { setTimeout(pollActive, 3000); return; }
+  const pre = $('#console');
+  if (r.active && r.id !== ACT.id) { ACT = {id: r.id, next: 0}; if (pre) pre.textContent = ''; return pollActive(); }
+  if (pre && r.lines.length) {
+    const atEnd = pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 20;
+    pre.textContent += (pre.textContent ? '\n' : '') + r.lines.join('\n');
+    if (atEnd) pre.scrollTop = pre.scrollHeight;
+  }
+  ACT.next = r.next;
+  if (r.active) return setTimeout(pollActive, 1500);
+  ACT = null; lockRun();
+  const t = $('#jobtitle'); if (t) t.textContent = '✅ The other run finished: the buttons work again';
+  refresh(true);
+}
 function showConsole(title, lines, cmds) {
   const c = $('#c-console'); c.hidden = false;
   const pre = h('pre', {class: 'console', id: 'console'}, (lines || []).join('\n'));
@@ -1093,13 +1151,17 @@ async function call(method, path, body) {
 }
 async function run(a, extra) {
   if (!API) return showCommands(a, extra);
-  if (JOB.running) return toast('Another action is still running');
+  if (JOB.running || ACT) return toast('Another radar run is still running');
   if (a === 'sync_data_repo' && !confirm('Full sync pushes your clean corpus and your overlay (peers/' + (ST.data_repo.me || 'you') + '.json) to ic-paper-radar-data. Continue?')) return;
   const body = Object.assign({action: a}, extra || {});
   const dirty = isDirty();
   if (dirty) body.config = collect();
   let r;
   try { r = await call('POST', '/api/run', body); } catch (e) { return alert('The radar server did not answer: ' + e); }
+  if (!r.ok && r.already_running) {  // never two runs at once: show the one that is running
+    if (r.active) return streamActive(r.active);
+    if (r.job) { JOB = {id: r.job.id, next: 0, running: true}; showConsole(`⏳ Already running: ${r.job.label}`, []); lockRun(); return poll(); }
+  }
   if (!r.ok) return alert(r.error || 'Failed');
   if (dirty) { baseline = snapshot(); changed(); }
   JOB = {id: r.job.id, next: 0, running: true};
@@ -1337,6 +1399,7 @@ async function connect() {
       API = b; ST = j.status; S = j.editable; buildKW(); renderAll(); baseline = snapshot(); changed();
       const m = $('#mode'); m.textContent = '🟢 Live'; m.title = 'Connected to ' + b + ': buttons run on the radar computer';
       if (j.job && j.job.running) { JOB = {id: j.job.id, next: 0, running: true}; showConsole(`⏳ ${j.job.label}…`, []); poll(); }
+      else if (j.active) streamActive(j.active);
       return;
     }
   }

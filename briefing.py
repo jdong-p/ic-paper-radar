@@ -51,6 +51,7 @@ import fetcher
 import html_renderer
 import pins
 import relations
+import run_lock
 import topic
 import store as store_mod
 import vpn_checker
@@ -548,6 +549,17 @@ def main():
     if a.gui is not None:  # the Setup & Control Center: a local server until Ctrl+C (control_center.py)
         import control_center
         return control_center.serve_gui(cfg, a.gui or None, open_browser=not a.no_browser)
+    # one radar run at a time (run_lock.py): the scheduled tasks, terminal runs and the Control Center's jobs
+    # wait for each other (up to 30 min) instead of working on the store / data-repo clone together
+    recall_only = a.recall and not (a.topic or a.sync or a.rescore or a.lineage or a.add or a.seed_pillars is not None
+                                    or any(getattr(a, f) for f in curation.ACTIONS))
+    if not recall_only:
+        busy = run_lock.acquire(sys.argv[1:])
+        if busy:
+            print(f"[BUSY] still running after {run_lock.WAIT_S // 60} min: {run_lock.describe(busy)}. "
+                  "Not started; run it again later.", file=sys.stderr)
+            return run_lock.EXIT_BUSY
+        run_lock.tee_output()  # .run.log: the Control Center shows this run too
     if a.pillar and a.pillar not in catalog.PILLARS:
         ap.error(f"--pillar must be one of {sorted(k for k in catalog.PILLARS if k)} (config.json \"pillars\")")
     if not a.no_claude and not claude_available(cfg):

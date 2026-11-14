@@ -11,6 +11,8 @@
 .env
 .env.*
 .radar_token
+.run.lock
+.run.log
 *.key
 
 # Runtime output and logs
