@@ -102,13 +102,15 @@ def deployment(cfg):
 
 
 def _lan_ip(h):
-    """A private-LAN or Tailscale/CGNAT (100.64.0.0/10) IP address: the only extra addresses --gui may bind."""
+    """A private-LAN or Tailscale IP address (the shared-address range of RFC 6598, where Tailscale puts its
+    nodes): the only extra addresses --gui may bind."""
     import ipaddress
     try:
         ip = ipaddress.ip_address(str(h))
     except ValueError:
         return False
-    return not ip.is_loopback and (ip.is_private or ip in ipaddress.ip_network("100.64.0.0/10"))
+    cgnat = ipaddress.IPv4Network((0x64400000, 10))  # RFC 6598 shared address space (Tailscale)
+    return not ip.is_loopback and (ip.is_private or (ip.version == 4 and ip in cgnat))
 
 
 def editable(cfg):
@@ -1595,7 +1597,7 @@ function renderDeploy() {
     h('p', {class: 'small muted'}, STARTER
       ? `The --gui server also listens on these private-LAN / Tailscale IPs (port ${dp.gui_port}), each behind the per-launch key; its links are in _system/gui_link.txt. Only addresses like 192.168.x.x, 10.x.x.x or 100.64–127.x.x (Tailscale) are used.`
       : `radar_sync_server.py answers on :${dp.port}; these hosts are the addresses your pages try (127.0.0.1 first). Your phone opens the key link from Open_on_iPhone.txt once.`),
-    chips(S.sync_hosts, {placeholder: 'e.g. 192.168.8.105 or 100.x.y.z', check: v => /^[A-Za-z0-9][A-Za-z0-9.-]{0,99}$/.test(v) ? null : 'A host name or IP address'}),
+    chips(S.sync_hosts, {placeholder: "this PC's LAN or Tailscale IP", check: v => /^[A-Za-z0-9][A-Za-z0-9.-]{0,99}$/.test(v) ? null : 'A host name or IP address'}),
     h('div', {class: 'row small'}, dp.phone_link ? h('a', {href: dp.phone_link}, '📱 Open_on_iPhone.txt (the key link for your phone)') : null,
       dp.gui_link ? h('span', {class: 'muted'}, `🔑 GUI links: ${dp.gui_link}`) : null),
     h('h3', {}, '🗓️ Task Scheduler (copy into a terminal on the radar computer)'),
